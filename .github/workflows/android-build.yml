@@ -65,8 +65,8 @@ jobs:
 
           cp app/build/outputs/apk/release/app-release.apk Jarvis-NEET2027.apk
 
+          gh release delete "latest-apk" --repo "${GITHUB_REPOSITORY}" --cleanup-tag --yes >/dev/null 2>&1 || true
           gh release create "latest-apk" Jarvis-NEET2027.apk \
             --repo "${GITHUB_REPOSITORY}" \
             --title "J.A.R.V.I.S. NEET 2027 APK" \
-            --notes "Tap Jarvis-NEET2027.apk below to download and install directly on your Xiaomi Pad 6." \
-            --clobber
+            --notes "Tap Jarvis-NEET2027.apk below to download and install directly on your Xiaomi Pad 6."
