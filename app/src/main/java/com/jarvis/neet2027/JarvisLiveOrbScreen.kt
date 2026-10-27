@@ -41,7 +41,6 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Icon
@@ -86,10 +85,10 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.random.Random
 
-private data classOrbParticle3D(
+private data class OrbParticle3D(
     val theta: Float,
     val phi: Float,
-    val shellLayer: Int, // 0 = inner core, 1 = mid matrix, 2 = outer corona
+    val shellLayer: Int,
     val baseRadiusFactor: Float,
     val dotSize: Float,
     val speedMultiplier: Float,
@@ -120,16 +119,14 @@ fun JarvisLiveParticleOrbPage(
     }
     var lastEmotion by remember { mutableStateOf("calm") }
     var textDraft by remember { mutableStateOf("") }
-    var isContinuousLive by remember { mutableStateOf(false) }
 
-    // British Butler TextToSpeech Engine
     var ttsEngine by remember { mutableStateOf<TextToSpeech?>(null) }
     DisposableEffect(context) {
         var engine: TextToSpeech? = null
         engine = TextToSpeech(context) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 engine?.language = Locale.UK
-                engine?.setPitch(0.88f) // Refined mid-low British butler resonance
+                engine?.setPitch(0.88f)
                 engine?.setSpeechRate(1.02f)
             }
         }
@@ -140,7 +137,6 @@ fun JarvisLiveParticleOrbPage(
         }
     }
 
-    // Simulated acoustic waveform pulse when speaking or thinking
     LaunchedEffect(orbMode) {
         while (orbMode == VoiceOrbState.SPEAKING || orbMode == VoiceOrbState.THINKING) {
             liveSoundLevel = if (orbMode == VoiceOrbState.SPEAKING) {
@@ -188,7 +184,6 @@ fun JarvisLiveParticleOrbPage(
 
             val tts = ttsEngine
             if (tts != null) {
-                // Emotional prosody tuning
                 when (reply.emotionTag) {
                     "urgent", "focused" -> {
                         tts.setPitch(0.92f)
@@ -224,7 +219,6 @@ fun JarvisLiveParticleOrbPage(
         }
     }
 
-    // Android SpeechRecognizer for Live Voice Input
     val speechRecognizer = remember {
         if (SpeechRecognizer.isRecognitionAvailable(context)) {
             SpeechRecognizer.createSpeechRecognizer(context)
@@ -296,7 +290,6 @@ fun JarvisLiveParticleOrbPage(
         if (granted) triggerVoiceListening()
     }
 
-    // Living White & Architectural Grey Spatial Container
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -321,7 +314,6 @@ fun JarvisLiveParticleOrbPage(
                 shape = RoundedCornerShape(30.dp)
             )
     ) {
-        // 1. Living White & Greyish Ambient Mesh + 3D Black Particle-Reactive Jarvis Sphere
         BlackJarvis3DParticleCanvas(
             orbState = orbMode,
             soundLevel = liveSoundLevel,
@@ -340,7 +332,6 @@ fun JarvisLiveParticleOrbPage(
             modifier = Modifier.fillMaxSize()
         )
 
-        // 2. Top Monochrome Frosted HUD Header
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -417,7 +408,6 @@ fun JarvisLiveParticleOrbPage(
             }
         }
 
-        // 3. Bottom Frosted Monochrome Live Transcript & Quick Input Dock
         Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -455,7 +445,6 @@ fun JarvisLiveParticleOrbPage(
                 )
             }
 
-            // Sleek Black & White Glass Pill Input
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -517,14 +506,13 @@ private fun BlackJarvis3DParticleCanvas(
     onTapOrb: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    // Generate 320 3D spherical particles across 3 concentric shells (like the Iron Man J.A.R.V.I.S. hologram)
     val particles = remember {
         val rng = Random(2027)
         List(320) { idx ->
             val layer = when {
-                idx < 70 -> 0   // Dense inner nucleus
-                idx < 210 -> 1  // Mid structural wireframe matrix
-                else -> 2       // Outer reactive particle corona
+                idx < 70 -> 0
+                idx < 210 -> 1
+                else -> 2
             }
             val radiusFactor = when (layer) {
                 0 -> 0.28f + rng.nextFloat() * 0.14f
@@ -595,7 +583,6 @@ private fun BlackJarvis3DParticleCanvas(
         val cy = h * 0.44f + tilt.y * 2.2f
         val baseOrbRadius = min(w, h) * 0.27f * (1f + animatedAmplitude * 0.22f)
 
-        // Living White & Soft-Greyish Background Waves & Ambient Mist Orbs
         val bgOrb1 = Offset(
             x = w * (0.25f + 0.08f * cos(masterSpin)),
             y = h * (0.30f + 0.06f * sin(masterSpin))
@@ -623,7 +610,6 @@ private fun BlackJarvis3DParticleCanvas(
             center = bgOrb2
         )
 
-        // Subtle Architectural Grey HUD Grid & Concentric Sound Ripples on White Canvas
         val rippleCount = 4
         for (rIdx in 1..rippleCount) {
             val rippleRadius = baseOrbRadius * (1.08f + rIdx * 0.16f + animatedAmplitude * 0.12f * rIdx)
@@ -638,7 +624,6 @@ private fun BlackJarvis3DParticleCanvas(
             )
         }
 
-        // 3D Shadow Halo under the Black Jarvis Sphere for depth on White/Grey Canvas
         drawCircle(
             brush = Brush.radialGradient(
                 colors = listOf(
@@ -653,7 +638,6 @@ private fun BlackJarvis3DParticleCanvas(
             center = Offset(cx, cy)
         )
 
-        // Broken Mechanical HUD Callout Arcs (like Iron Man J.A.R.V.I.S. schematic rings, in Obsidian Black)
         val arcRectSize = Size(baseOrbRadius * 2.15f, baseOrbRadius * 2.15f)
         val arcTopLeft = Offset(cx - arcRectSize.width / 2f, cy - arcRectSize.height / 2f)
         for (i in 0 until 6) {
@@ -669,7 +653,6 @@ private fun BlackJarvis3DParticleCanvas(
             )
         }
 
-        // Inner Tilted Geodesic Elliptical Rings
         val innerArcSize = Size(baseOrbRadius * 1.48f, baseOrbRadius * 1.48f)
         val innerTopLeft = Offset(cx - innerArcSize.width / 2f, cy - innerArcSize.height / 2f)
         for (i in 0 until 4) {
@@ -685,7 +668,6 @@ private fun BlackJarvis3DParticleCanvas(
             )
         }
 
-        // Radial Neural Data Spokes (connecting core to outer shell, pulsing with sound)
         val spokeCount = 18
         for (s in 0 until spokeCount) {
             val angle = (s.toFloat() / spokeCount) * 2f * PI.toFloat() + masterSpin * 0.4f
@@ -702,7 +684,6 @@ private fun BlackJarvis3DParticleCanvas(
             )
         }
 
-        // 3D Projected Particle Cloud (320 Obsidian, Charcoal & Graphite 3D Particles + Neural Synapses)
         var prevProjected: Offset? = null
         val rotY = masterSpin + (tilt.x * 0.04f)
         val rotX = sin(secondarySpin) * 0.45f + (tilt.y * 0.04f)
@@ -714,24 +695,20 @@ private fun BlackJarvis3DParticleCanvas(
             val jitter = 1f + sin(secondarySpin * 3f + idx) * animatedAmplitude * 0.28f
             val r3D = baseOrbRadius * pt.baseRadiusFactor * jitter
 
-            // 3D Spherical Coordinates -> (x, y, z)
             val x0 = r3D * cos(currentPhi) * cos(currentTheta)
             val y0 = r3D * sin(currentPhi)
             val z0 = r3D * cos(currentPhi) * sin(currentTheta)
 
-            // Rotate around X-axis for 3D tilt depth
             val y1 = y0 * cos(rotX) - z0 * sin(rotX)
             val z1 = y0 * sin(rotX) + z0 * cos(rotX)
 
-            // Perspective scale from z-depth (-r3D..+r3D)
-            val depthNorm = ((z1 / (baseOrbRadius * 1.2f)) + 1f) * 0.5f // 0 = back, 1 = front
+            val depthNorm = ((z1 / (baseOrbRadius * 1.2f)) + 1f) * 0.5f
             val perspective = 0.55f + depthNorm * 0.70f
 
             val screenX = cx + x0 * perspective
             val screenY = cy + y1 * perspective
             val currentOffset = Offset(screenX, screenY)
 
-            // Draw faint neural filament between neighbouring front particles
             if (idx % 5 == 0 && prevProjected != null && depthNorm > 0.45f) {
                 val dx = screenX - prevProjected!!.x
                 val dy = screenY - prevProjected!!.y
@@ -748,7 +725,6 @@ private fun BlackJarvis3DParticleCanvas(
                 prevProjected = currentOffset
             }
 
-            // Particle colour: pure obsidian black in front, charcoal/slate grey in back for true 3D depth
             val particleColor = when (pt.shellLayer) {
                 0 -> Color(0xFF000000)
                 1 -> Color(0xFF09090B)
@@ -764,7 +740,6 @@ private fun BlackJarvis3DParticleCanvas(
             )
         }
 
-        // Dense 3D Obsidian Singularity Core with Crisp White Specular Rim
         val coreRadius = baseOrbRadius * (0.21f + animatedAmplitude * 0.10f)
         drawCircle(
             brush = Brush.radialGradient(
