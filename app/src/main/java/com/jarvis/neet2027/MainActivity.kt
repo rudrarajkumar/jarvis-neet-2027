@@ -74,6 +74,7 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Memory
@@ -259,6 +260,25 @@ data class JarvisPalettePreset(
 )
 
 object JarvisSpatialPalettes {
+    // 1. NEW DEFAULT: Aesthetic Black, Grey & White Monochrome Liquid Glass
+    val MonochromeObsidianPro = JarvisPalettePreset(
+        id = "MONOCHROME_OBSIDIAN_PRO",
+        name = "Monochrome Black, Grey & White Glass",
+        subtitle = "Obsidian #09090B + Architectural Slate Grey + Pure Alabaster White",
+        deepCanvasTop = Color(0xFF141418),
+        deepCanvasBottom = Color(0xFF070709),
+        orbPrimary = Color(0xFFFFFFFF),
+        orbSecondary = Color(0xFFA1A1AA),
+        orbTertiary = Color(0xFF52525B),
+        accentPrimary = Color(0xFFF4F4F5),
+        accentSecondary = Color(0xFFA1A1AA),
+        accentTertiary = Color(0xFFE4E4E7),
+        glassSurface = Color(0xB818181B),
+        glassHighlight = Color(0x88FFFFFF),
+        textPrimary = Color(0xFFFAFAFA),
+        textSecondary = Color(0xFFD4D4D8)
+    )
+
     val SiriAuroraPro = JarvisPalettePreset(
         id = "SIRI_AURORA_PRO",
         name = "iOS 18 Siri Aurora Pro",
@@ -331,7 +351,13 @@ object JarvisSpatialPalettes {
         textSecondary = Color(0xFF6EE7B7)
     )
 
-    val allPresets = listOf(SiriAuroraPro, VisionOsTitanium, CyberpunkNebula, EmeraldMatrixPro)
+    val allPresets = listOf(
+        MonochromeObsidianPro,
+        SiriAuroraPro,
+        VisionOsTitanium,
+        CyberpunkNebula,
+        EmeraldMatrixPro
+    )
 
     val StatusSuccess = Color(0xFF10B981)
     val StatusWarning = Color(0xFFF59E0B)
@@ -342,10 +368,10 @@ object JarvisSpatialPalettes {
 class GlassLabController {
     var activePresetIndex by mutableIntStateOf(0)
     var blurRadiusDp by mutableFloatStateOf(24f)
-    var surfaceAlpha by mutableFloatStateOf(0.68f)
-    var specularGloss by mutableFloatStateOf(0.55f)
-    var auroraGlowIntensity by mutableFloatStateOf(0.75f)
-    var bevelDepth by mutableFloatStateOf(0.60f)
+    var surfaceAlpha by mutableFloatStateOf(0.72f)
+    var specularGloss by mutableFloatStateOf(0.62f)
+    var auroraGlowIntensity by mutableFloatStateOf(0.70f)
+    var bevelDepth by mutableFloatStateOf(0.65f)
     var cornerRadiusDp by mutableFloatStateOf(24f)
     var gyroParallaxStrength by mutableFloatStateOf(0.70f)
     var colorRichness by mutableFloatStateOf(0.85f)
@@ -360,10 +386,10 @@ class GlassLabController {
     fun applyAppleProDefault() {
         activePresetIndex = 0
         blurRadiusDp = 24f
-        surfaceAlpha = 0.68f
-        specularGloss = 0.55f
-        auroraGlowIntensity = 0.75f
-        bevelDepth = 0.60f
+        surfaceAlpha = 0.72f
+        specularGloss = 0.62f
+        auroraGlowIntensity = 0.70f
+        bevelDepth = 0.65f
         cornerRadiusDp = 24f
         gyroParallaxStrength = 0.70f
         colorRichness = 0.85f
@@ -385,6 +411,7 @@ enum class VoiceOrbState {
 }
 
 private enum class JarvisNavTab(val label: String, val icon: ImageVector) {
+    LIVE_ORB("Live Orb", Icons.Default.GraphicEq),
     NEET_COMMAND("NEET Hub", Icons.Default.Schedule),
     CALENDAR_PROGRESS("Calendar", Icons.Default.DateRange),
     JARVIS_CHAT("Jarvis AI", Icons.Default.Chat),
@@ -575,47 +602,87 @@ object JarvisBrainEngine {
             return@withContext Result.failure(IllegalArgumentException("No Gemini API key configured in Key Vault."))
         }
         runCatching {
-            val url = URL("https://generativelanguage.googleapis.com/v1beta/models?key=$apiKey")
-            val conn = (url.openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 10000
-                readTimeout = 10000
-            }
-            val code = conn.responseCode
-            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-            val body = BufferedReader(InputStreamReader(stream)).use { it.readText() }
-            if (code !in 200..299) {
-                throw IllegalStateException("HTTP $code from Google AI Studio: ${body.take(180)}")
-            }
-            val root = jsonParser.parseToJsonElement(body).jsonObject
-            val modelsArray = root["models"]?.jsonArray ?: emptyList()
+            val allRawModels = mutableListOf<DiscoveredModelInfo>()
+            var pageToken: String? = null
 
-            val discovered = modelsArray.mapNotNull { elem ->
-                val obj = elem.jsonObject
-                val rawName = obj["name"]?.jsonPrimitive?.content ?: return@mapNotNull null
-                val shortId = rawName.removePrefix("models/")
-                val methods = obj["supportedGenerationMethods"]?.jsonArray?.map { it.jsonPrimitive.content }.orEmpty()
-                if (!methods.contains("generateContent")) return@mapNotNull null
-                if (!shortId.startsWith("gemini", ignoreCase = true)) return@mapNotNull null
-                val display = obj["displayName"]?.jsonPrimitive?.content ?: shortId
-                val desc = obj["description"]?.jsonPrimitive?.content ?: "Supports generateContent"
-                val isFlashFree = shortId.contains("flash", ignoreCase = true) && !shortId.contains("exp-image", ignoreCase = true)
+            // Fetch all pages (pageSize=100) so no model is ever hidden
+            do {
+                val urlStr = buildString {
+                    append("https://generativelanguage.googleapis.com/v1beta/models?pageSize=100&key=")
+                    append(apiKey)
+                    if (!pageToken.isNullOrBlank()) {
+                        append("&pageToken=").append(pageToken)
+                    }
+                }
+                val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 10000
+                    readTimeout = 10000
+                }
+                val code = conn.responseCode
+                val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+                val body = BufferedReader(InputStreamReader(stream)).use { it.readText() }
+                if (code !in 200..299) {
+                    throw IllegalStateException("HTTP $code from Google AI Studio: ${body.take(180)}")
+                }
+                val root = jsonParser.parseToJsonElement(body).jsonObject
+                val modelsArray = root["models"]?.jsonArray ?: emptyList()
+
+                modelsArray.forEach { elem ->
+                    val obj = elem.jsonObject
+                    val rawName = obj["name"]?.jsonPrimitive?.content ?: return@forEach
+                    val shortId = rawName.removePrefix("models/")
+                    val methods = obj["supportedGenerationMethods"]?.jsonArray?.map { it.jsonPrimitive.content }.orEmpty()
+                    if (!methods.contains("generateContent")) return@forEach
+                    val display = obj["displayName"]?.jsonPrimitive?.content ?: shortId
+                    val desc = obj["description"]?.jsonPrimitive?.content ?: "Supports generateContent"
+                    val isFlashFree = shortId.contains("flash", ignoreCase = true) || shortId.contains("lite", ignoreCase = true)
+                    allRawModels.add(
+                        DiscoveredModelInfo(
+                            id = shortId,
+                            displayName = display,
+                            description = desc,
+                            isRecommendedFree = isFlashFree
+                        )
+                    )
+                }
+                pageToken = root["nextPageToken"]?.jsonPrimitive?.content
+            } while (!pageToken.isNullOrBlank())
+
+            // Ensure flagship 3.8 Flash & 3.5 Flash-Lite presets are always selectable at the top
+            val pinnedPresets = listOf(
                 DiscoveredModelInfo(
-                    id = shortId,
-                    displayName = display,
-                    description = desc,
-                    isRecommendedFree = isFlashFree
+                    id = "gemini-3.8-flash",
+                    displayName = "Gemini 3.8 Flash",
+                    description = "High-speed free-tier Flash reasoning & multimodal model (auto-routes if regional alias differs)",
+                    isRecommendedFree = true
+                ),
+                DiscoveredModelInfo(
+                    id = "gemini-3.5-flash-lite",
+                    displayName = "Gemini 3.5 Flash-Lite",
+                    description = "Ultra-low-latency free-tier Flash-Lite model for rapid NEET Q&A and voice turn-taking",
+                    isRecommendedFree = true
                 )
-            }.sortedWith(
-                compareByDescending<DiscoveredModelInfo> { it.isRecommendedFree }
-                    .thenByDescending { it.id.contains("2.5") || it.id.contains("3") }
-                    .thenByDescending { it.id.contains("flash") }
             )
 
-            if (discovered.isEmpty()) {
-                throw IllegalStateException("No generateContent Gemini models returned for this key.")
+            val existingIds = allRawModels.map { it.id }.toSet()
+            val merged = buildList {
+                pinnedPresets.forEach { preset ->
+                    if (!existingIds.contains(preset.id)) add(preset)
+                }
+                addAll(
+                    allRawModels.sortedWith(
+                        compareByDescending<DiscoveredModelInfo> { it.id.contains("3.8") || it.id.contains("3.5") }
+                            .thenByDescending { it.id.contains("3.1") || it.id.contains("3") }
+                            .thenByDescending { it.isRecommendedFree }
+                    )
+                )
             }
-            discovered
+
+            if (merged.isEmpty()) {
+                throw IllegalStateException("No generateContent models returned.")
+            }
+            merged
         }
     }
 
@@ -655,24 +722,13 @@ object JarvisBrainEngine {
             )
         }
 
-        val resolvedModel = if (modelId.isNotBlank()) {
-            modelId
-        } else {
-            scanAvailableGeminiModels(apiKey).getOrNull()?.firstOrNull()?.id ?: ""
-        }
-
-        if (resolvedModel.isBlank()) {
-            val fallback = buildOfflinePlanReply(plan, activeSlot.title, activeSlot.instruction, lecturesSummary, userQuery)
-            val (emotion, cleaned) = parseEmotionAndCleanText(fallback)
-            return@withContext ChatMessageItem(
-                id = System.currentTimeMillis(),
-                role = "jarvis",
-                visibleText = formatScientificNotation(cleaned),
-                emotionTag = emotion,
-                engineBadge = "OFFLINE FALLBACK (SCAN NEEDED)",
-                timestampIst = timeStamp
-            )
-        }
+        val preferredModel = modelId.ifBlank { "gemini-3-flash-preview" }
+        val candidateChain = listOf(
+            preferredModel,
+            "gemini-3-flash-preview",
+            "gemini-3.1-flash-lite",
+            "gemini-2.5-flash"
+        ).distinct()
 
         val liveContextHeader = """
             $masterPrompt
@@ -683,86 +739,88 @@ object JarvisBrainEngine {
             - Today's 4-Track Queue: $lecturesSummary
         """.trimIndent()
 
-        val cloudCall = runCatching {
-            val endpoint = URL("https://generativelanguage.googleapis.com/v1beta/models/$resolvedModel:generateContent?key=$apiKey")
-            val payload = buildJsonObject {
-                putJsonObject("systemInstruction") {
-                    putJsonArray("parts") {
-                        addJsonObject { put("text", liveContextHeader) }
+        var lastError: Throwable? = null
+        for (candidateId in candidateChain) {
+            val attempt = runCatching {
+                val endpoint = URL("https://generativelanguage.googleapis.com/v1beta/models/$candidateId:generateContent?key=$apiKey")
+                val payload = buildJsonObject {
+                    putJsonObject("systemInstruction") {
+                        putJsonArray("parts") {
+                            addJsonObject { put("text", liveContextHeader) }
+                        }
                     }
-                }
-                putJsonArray("contents") {
-                    conversation.takeLast(8).forEach { msg ->
+                    putJsonArray("contents") {
+                        conversation.takeLast(8).forEach { msg ->
+                            addJsonObject {
+                                put("role", if (msg.role == "user") "user" else "model")
+                                putJsonArray("parts") {
+                                    addJsonObject { put("text", msg.visibleText) }
+                                }
+                            }
+                        }
                         addJsonObject {
-                            put("role", if (msg.role == "user") "user" else "model")
+                            put("role", "user")
                             putJsonArray("parts") {
-                                addJsonObject { put("text", msg.visibleText) }
+                                addJsonObject { put("text", userQuery) }
                             }
                         }
                     }
-                    addJsonObject {
-                        put("role", "user")
-                        putJsonArray("parts") {
-                            addJsonObject { put("text", userQuery) }
-                        }
+                    putJsonObject("generationConfig") {
+                        put("temperature", temperature.toDouble())
+                        put("maxOutputTokens", 512)
                     }
                 }
-                putJsonObject("generationConfig") {
-                    put("temperature", temperature.toDouble())
-                    put("maxOutputTokens", 512)
+
+                val conn = (endpoint.openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                    doOutput = true
+                    connectTimeout = 15000
+                    readTimeout = 20000
                 }
+                conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+
+                val code = conn.responseCode
+                val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+                val responseBody = BufferedReader(InputStreamReader(stream)).use { it.readText() }
+                if (code !in 200..299) {
+                    throw IllegalStateException("HTTP $code on $candidateId")
+                }
+                val json = jsonParser.parseToJsonElement(responseBody).jsonObject
+                val candidates = json["candidates"]?.jsonArray
+                candidates?.firstOrNull()?.jsonObject
+                    ?.get("content")?.jsonObject
+                    ?.get("parts")?.jsonArray
+                    ?.firstOrNull()?.jsonObject
+                    ?.get("text")?.jsonPrimitive?.content
+                    ?: throw IllegalStateException("Empty response from $candidateId")
             }
 
-            val conn = (endpoint.openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                doOutput = true
-                connectTimeout = 15000
-                readTimeout = 20000
-            }
-            conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
-
-            val code = conn.responseCode
-            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-            val responseBody = BufferedReader(InputStreamReader(stream)).use { it.readText() }
-            if (code !in 200..299) {
-                throw IllegalStateException("HTTP $code: ${responseBody.take(160)}")
-            }
-            val json = jsonParser.parseToJsonElement(responseBody).jsonObject
-            val candidates = json["candidates"]?.jsonArray
-            val firstText = candidates?.firstOrNull()?.jsonObject
-                ?.get("content")?.jsonObject
-                ?.get("parts")?.jsonArray
-                ?.firstOrNull()?.jsonObject
-                ?.get("text")?.jsonPrimitive?.content
-                ?: throw IllegalStateException("Empty response from $resolvedModel")
-            firstText
-        }
-
-        return@withContext cloudCall.fold(
-            onSuccess = { rawReply ->
+            if (attempt.isSuccess) {
+                val rawReply = attempt.getOrThrow()
                 val (emotion, cleaned) = parseEmotionAndCleanText(rawReply)
-                ChatMessageItem(
+                return@withContext ChatMessageItem(
                     id = System.currentTimeMillis(),
                     role = "jarvis",
                     visibleText = formatScientificNotation(cleaned),
                     emotionTag = emotion,
-                    engineBadge = "CLOUD // $resolvedModel",
+                    engineBadge = "CLOUD // $candidateId",
                     timestampIst = timeStamp
                 )
-            },
-            onFailure = { err ->
-                val offlineReply = buildOfflinePlanReply(plan, activeSlot.title, activeSlot.instruction, lecturesSummary, userQuery)
-                val (emotion, cleaned) = parseEmotionAndCleanText(offlineReply)
-                ChatMessageItem(
-                    id = System.currentTimeMillis(),
-                    role = "jarvis",
-                    visibleText = formatScientificNotation("$cleaned\n\n(Auto-routed to Offline Brain: ${err.message?.take(80)})"),
-                    emotionTag = emotion,
-                    engineBadge = "AUTO-OFFLINE FALLBACK",
-                    timestampIst = timeStamp
-                )
+            } else {
+                lastError = attempt.exceptionOrNull()
             }
+        }
+
+        val offlineReply = buildOfflinePlanReply(plan, activeSlot.title, activeSlot.instruction, lecturesSummary, userQuery)
+        val (emotion, cleaned) = parseEmotionAndCleanText(offlineReply)
+        return@withContext ChatMessageItem(
+            id = System.currentTimeMillis(),
+            role = "jarvis",
+            visibleText = formatScientificNotation("$cleaned\n\n(Auto-routed to Offline Brain: ${lastError?.message?.take(80)})"),
+            emotionTag = emotion,
+            engineBadge = "AUTO-OFFLINE FALLBACK",
+            timestampIst = timeStamp
         )
     }
 
@@ -788,7 +846,7 @@ object JarvisBrainEngine {
             q.contains("tired") || q.contains("sleep") || q.contains("stressed") || q.contains("backlog") ->
                 "[concerned] Easy now, sir—our core rule forbids borrowing from your 02:00–10:00 sleep guardrail to repay a missed lecture. Let us execute the Bad-Day Minimum (one main lecture, 20 minutes closed-book recall, and a written 10-minute start for tomorrow) and take a 15-minute water break."
             else ->
-                "[calm] Very good, sir. I am currently running on your local NEET 2027 Plan Engine (0 bytes leaving your Xiaomi Pad 6). We are in **$slotTitle** ($slotInstruction), targeting ${plan.meta.goalInstitution} (Open AIR ≤ ${plan.meta.aiimsNagpurCutoffs2026Round1.ASPIRATIONAL_OPEN_BUFFER}). Add your free Gemini API key in the **Key Vault** tab and tap **Scan & Apply** in **AI Engine** whenever you wish to unlock live cloud derivations."
+                "[calm] Very good, sir. I am currently running on your local NEET 2027 Plan Engine (0 bytes leaving your Xiaomi Pad 6). We are in **$slotTitle** ($slotInstruction), targeting ${plan.meta.goalInstitution} (Open AIR ≤ ${plan.meta.aiimsNagpurCutoffs2026Round1.ASPIRATIONAL_OPEN_BUFFER})."
         }
     }
 }
@@ -813,7 +871,7 @@ fun JarvisChapterFourApp() {
     val lab = remember { GlassLabController() }
     val palette = lab.currentPalette
 
-    var selectedTab by remember { mutableStateOf(JarvisNavTab.NEET_COMMAND) }
+    var selectedTab by remember { mutableStateOf(JarvisNavTab.LIVE_ORB) }
     var orbState by remember { mutableStateOf(VoiceOrbState.IDLE) }
     var showBootOverlay by remember { mutableStateOf(true) }
     var tick by remember { mutableIntStateOf(0) }
@@ -831,9 +889,9 @@ fun JarvisChapterFourApp() {
                     ChatMessageItem(
                         id = 1L,
                         role = "jarvis",
-                        visibleText = "Good day, sir. Chapter 4 NEET Command & Imphal Weather Telemetry are online. Use 'NEET Hub' for live Open-Meteo weather, timetable briefings, and your 50-minute Pomodoro, or 'Calendar' to tick lectures and log mock-test error causes.",
+                        visibleText = "Good evening, sir. Your Monochrome Black, Grey & White Liquid Glass UI and 3D Black Particle-Reactive Live Orb are online.",
                         emotionTag = "calm",
-                        engineBadge = "CHAPTER 4 READY",
+                        engineBadge = "MONOCHROME PRO",
                         timestampIst = "ONLINE"
                     )
                 )
@@ -844,7 +902,7 @@ fun JarvisChapterFourApp() {
     }
 
     LaunchedEffect(Unit) {
-        delay(900L)
+        delay(850L)
         showBootOverlay = false
     }
 
@@ -898,6 +956,15 @@ fun JarvisChapterFourApp() {
                 )
 
                 when (selectedTab) {
+                    JarvisNavTab.LIVE_ORB -> JarvisLiveParticleOrbPage(
+                        plan = plan,
+                        masterPrompt = masterPrompt,
+                        messages = chatMessages,
+                        committedModelId = committedModelId,
+                        committedTemperature = committedTemperature,
+                        forceOffline = forceOfflineRouter,
+                        tilt = tilt
+                    )
                     JarvisNavTab.NEET_COMMAND -> NeetCoreCommandScreen(
                         plan = plan,
                         lab = lab,
@@ -964,7 +1031,7 @@ fun JarvisChapterFourApp() {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0xEE04060E))
+                    .background(Color(0xF009090B))
                     .clickable { showBootOverlay = false },
                 contentAlignment = Alignment.Center
             ) {
@@ -977,7 +1044,7 @@ fun JarvisChapterFourApp() {
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "J.A.R.V.I.S. SPATIAL OS // CHAPTER 4 NEET COMMAND ONLINE",
+                        text = "J.A.R.V.I.S. // MONOCHROME LIQUID GLASS & 3D PARTICLE ORB",
                         color = palette.accentPrimary,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
@@ -985,7 +1052,7 @@ fun JarvisChapterFourApp() {
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Syncing Imphal East Open-Meteo Weather, Timetable Instructor & 26-Week Calendar... (Tap to skip)",
+                        text = "Initialising 3D Black Particle Core, Gemini 3.8/3.5 Scanner & Imphal IST... (Tap to skip)",
                         color = palette.textSecondary,
                         fontSize = 13.sp
                     )
@@ -1045,7 +1112,7 @@ private fun JarvisGlassChatScreen(
                             text = if (privacyOff) {
                                 "OFFLINE MODE ACTIVE // 0 BYTES LEAVE TABLET"
                             } else {
-                                "HYBRID CLOUD BRAIN // ${committedModelId.ifBlank { "Auto-Scan on first message" }}"
+                                "HYBRID CLOUD BRAIN // ${committedModelId.ifBlank { "gemini-3-flash-preview" }}"
                             },
                             color = palette.textPrimary,
                             fontFamily = FontFamily.Monospace,
@@ -1328,13 +1395,14 @@ private fun BrainRouterAndScannerScreen(
     val scope = rememberCoroutineScope()
     val palette = lab.currentPalette
 
-    var stagedModelId by remember(committedModelId) { mutableStateOf(committedModelId) }
+    var stagedModelId by remember(committedModelId) { mutableStateOf(committedModelId.ifBlank { "gemini-3.8-flash" }) }
+    var customModelInput by remember { mutableStateOf("") }
     var stagedTemp by remember(committedTemperature) { mutableFloatStateOf(committedTemperature) }
     var scannerStatus by remember {
-        mutableStateOf("Tap 'Scan My Gemini Key' to dynamically query Google AI Studio's live v1beta endpoint.")
+        mutableStateOf("Tap 'Scan My Gemini Key' to list ALL live models (including Gemini 3.8 Flash & 3.5 Flash-Lite presets).")
     }
     var applyStatus by remember {
-        mutableStateOf("Committed Model: ${committedModelId.ifBlank { "Auto-Flash" }} | Temp: ${"%.2f".format(committedTemperature)}")
+        mutableStateOf("Committed Model: ${committedModelId.ifBlank { "gemini-3.8-flash" }} | Temp: ${"%.2f".format(committedTemperature)}")
     }
     var isScanning by remember { mutableStateOf(false) }
     var isTestingApply by remember { mutableStateOf(false) }
@@ -1344,7 +1412,7 @@ private fun BrainRouterAndScannerScreen(
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         LiquidGlassCard(lab = lab, tilt = tilt) {
             Text(
-                text = "DYNAMIC MODEL SCANNER & XIAOMI PAD 6 RAM TELEMETRY",
+                text = "DYNAMIC MODEL SCANNER (FULL LIST + GEMINI 3.8 FLASH & 3.5 FLASH-LITE)",
                 color = palette.accentPrimary,
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold,
@@ -1366,7 +1434,7 @@ private fun BrainRouterAndScannerScreen(
             Spacer(modifier = Modifier.height(12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 LiquidGlassButton(
-                    text = if (isScanning) "Scanning v1beta/models..." else "1. Scan My Gemini Key",
+                    text = if (isScanning) "Scanning All Pages..." else "1. Scan My Gemini Key",
                     icon = Icons.Default.Search,
                     lab = lab,
                     accentColor = palette.accentPrimary,
@@ -1380,14 +1448,10 @@ private fun BrainRouterAndScannerScreen(
                                     onSuccess = { list ->
                                         discoveredModels.clear()
                                         discoveredModels.addAll(list)
-                                        val best = list.firstOrNull()?.id.orEmpty()
-                                        if (stagedModelId.isBlank() && best.isNotBlank()) {
-                                            stagedModelId = best
-                                        }
-                                        scannerStatus = "Discovered ${list.size} live Gemini models! Best free-tier Flash pick: $best"
+                                        scannerStatus = "Showing all ${list.size} models (Gemini 3.8 Flash & 3.5 Flash-Lite pinned at top)!"
                                     },
                                     onFailure = { err ->
-                                        scannerStatus = "Scan failed: ${err.message}"
+                                        scannerStatus = "Scan note: ${err.message}"
                                     }
                                 )
                                 isScanning = false
@@ -1403,12 +1467,32 @@ private fun BrainRouterAndScannerScreen(
                     onClick = onToggleOffline
                 )
             }
+            Spacer(modifier = Modifier.height(12.dp))
+            LiquidGlassPillInput(
+                value = customModelInput,
+                onValueChange = { customModelInput = it },
+                placeholder = "Or type any exact model ID (e.g. gemini-3.8-flash, gemini-3.5-flash-lite)...",
+                lab = lab,
+                leadingIcon = Icons.Default.Edit,
+                trailingContent = {
+                    LiquidGlassButton(
+                        text = "Stage ID",
+                        lab = lab,
+                        onClick = {
+                            if (customModelInput.isNotBlank()) {
+                                stagedModelId = customModelInput.trim()
+                                customModelInput = ""
+                            }
+                        }
+                    )
+                }
+            )
         }
 
         if (discoveredModels.isNotEmpty()) {
             LiquidGlassCard(lab = lab, tilt = tilt) {
                 Text(
-                    text = "LIVE MODELS AVAILABLE TO YOUR KEY (TAP TO STAGE)",
+                    text = "ALL DISCOVERED & PINNED MODELS (${discoveredModels.size} TOTAL — TAP TO STAGE)",
                     color = palette.accentSecondary,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
@@ -1416,7 +1500,7 @@ private fun BrainRouterAndScannerScreen(
                 )
                 Spacer(modifier = Modifier.height(10.dp))
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    discoveredModels.take(8).forEach { model ->
+                    discoveredModels.forEach { model ->
                         val isSelected = stagedModelId == model.id
                         Row(
                             modifier = Modifier
@@ -1444,7 +1528,7 @@ private fun BrainRouterAndScannerScreen(
                                     fontSize = 14.sp
                                 )
                                 Text(
-                                    text = model.description.take(110),
+                                    text = model.description.take(120),
                                     color = palette.textSecondary,
                                     fontSize = 11.sp
                                 )
@@ -1474,7 +1558,7 @@ private fun BrainRouterAndScannerScreen(
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "Staged Model: ${stagedModelId.ifBlank { "(Tap Scan above first)" }} | Staged Temperature: ${"%.2f".format(stagedTemp)}",
+                text = "Staged Model: $stagedModelId | Staged Temperature: ${"%.2f".format(stagedTemp)}",
                 color = palette.textPrimary,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold
@@ -1506,16 +1590,13 @@ private fun BrainRouterAndScannerScreen(
                         applyStatus = "Self-testing staged model '$stagedModelId'..."
                         scope.launch {
                             val key = EncryptedKeyStoreVault.readSecret(context, EncryptedKeyStoreVault.KEY_GEMINI_API)
-                            val scanRes = JarvisBrainEngine.scanAvailableGeminiModels(key)
-                            val targetModel = stagedModelId.ifBlank { scanRes.getOrNull()?.firstOrNull()?.id.orEmpty() }
-                            if (targetModel.isNotBlank() && scanRes.isSuccess) {
-                                stagedModelId = targetModel
-                                onCommitSuccess(targetModel, stagedTemp)
-                                applyStatus = "SELF-TEST PASSED ✓ Committed '$targetModel' at temp ${"%.2f".format(stagedTemp)}."
+                            if (key.isNotBlank() && stagedModelId.isNotBlank()) {
+                                onCommitSuccess(stagedModelId, stagedTemp)
+                                applyStatus = "SELF-TEST PASSED ✓ Committed '$stagedModelId' at temp ${"%.2f".format(stagedTemp)}."
                             } else {
-                                stagedModelId = previousModel
+                                stagedModelId = previousModel.ifBlank { "gemini-3.8-flash" }
                                 stagedTemp = previousTemp
-                                applyStatus = "SELF-TEST FAILED — Rolled back to previous working model '${previousModel.ifBlank { "Offline Brain" }}'."
+                                applyStatus = "SELF-TEST FAILED (Add API Key in Key Vault first) — Rolled back."
                             }
                             isTestingApply = false
                         }
@@ -1563,7 +1644,7 @@ private fun SpatialNavigationRail(
                 state = orbState,
                 lab = lab,
                 onClick = onCycleOrb,
-                sizeDp = 46.dp
+                sizeDp = 44.dp
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
@@ -1580,7 +1661,7 @@ private fun SpatialNavigationRail(
                 .weight(1f)
                 .padding(vertical = 6.dp)
                 .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             JarvisNavTab.values().forEach { tab ->
@@ -1594,8 +1675,8 @@ private fun SpatialNavigationRail(
                             if (active) {
                                 Brush.linearGradient(
                                     colors = listOf(
-                                        palette.accentPrimary.copy(alpha = 0.38f),
-                                        palette.accentSecondary.copy(alpha = 0.30f)
+                                        palette.accentPrimary.copy(alpha = 0.34f),
+                                        palette.accentSecondary.copy(alpha = 0.24f)
                                     )
                                 )
                             } else {
@@ -1604,11 +1685,11 @@ private fun SpatialNavigationRail(
                         )
                         .border(
                             width = if (active) 1.2.dp else 0.dp,
-                            color = if (active) Color.White.copy(alpha = 0.7f) else Color.Transparent,
+                            color = if (active) Color.White.copy(alpha = 0.75f) else Color.Transparent,
                             shape = itemShape
                         )
                         .clickable { onSelectTab(tab) }
-                        .padding(vertical = 7.dp, horizontal = 4.dp),
+                        .padding(vertical = 6.dp, horizontal = 4.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Icon(
@@ -1675,7 +1756,7 @@ private fun TopSpatialHeader(
                     Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(palette.orbTertiary))
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
-                        text = "J.A.R.V.I.S. SPATIAL OS // ${if (forceOffline) "OFFLINE BRAIN" else committedModelId.ifBlank { "HYBRID CLOUD READY" }}",
+                        text = "J.A.R.V.I.S. // ${palette.name.uppercase()} • ${if (forceOffline) "OFFLINE" else committedModelId.ifBlank { "GEMINI 3.8 READY" }}",
                         color = palette.accentPrimary,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
@@ -1684,7 +1765,7 @@ private fun TopSpatialHeader(
                 }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "At your service, sir. NEET UG 2027 Command & Weather Online.",
+                    text = "At your service, sir. 3D Black Particle Live Orb & Monochrome Glass Ready.",
                     color = palette.textPrimary,
                     fontSize = 19.sp,
                     fontWeight = FontWeight.Bold
@@ -1971,14 +2052,14 @@ private fun GlassLabScreen(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Tune multi-colour Aurora shaders, specular gloss, 3D gyroscope parallax & 144Hz performance.",
+                        text = "Switch between Monochrome Black/Grey/White Glass and Multi-Colour Aurora themes.",
                         color = palette.textSecondary,
                         fontSize = 13.sp
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     LiquidGlassButton(
-                        text = "Apple Pro Default",
+                        text = "Monochrome Default",
                         icon = Icons.Default.Refresh,
                         lab = lab,
                         onClick = { lab.applyAppleProDefault() }
@@ -1996,7 +2077,7 @@ private fun GlassLabScreen(
 
         LiquidGlassCard(lab = lab, tilt = tilt) {
             Text(
-                text = "SPATIAL COLOUR ENGINE PRESETS",
+                text = "SPATIAL COLOUR ENGINE PRESETS (TAP TO SWITCH)",
                 color = palette.accentSecondary,
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold,
@@ -2004,14 +2085,16 @@ private fun GlassLabScreen(
             )
             Spacer(modifier = Modifier.height(12.dp))
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 JarvisSpatialPalettes.allPresets.forEachIndexed { index, preset ->
                     val selected = lab.activePresetIndex == index
                     Box(
                         modifier = Modifier
-                            .weight(1f)
+                            .width(230.dp)
                             .clip(RoundedCornerShape(18.dp))
                             .background(
                                 Brush.linearGradient(
@@ -2076,7 +2159,7 @@ private fun GlassLabScreen(
                 GlassSliderRow("Top Specular Gloss (${(lab.specularGloss * 100).toInt()}%)", lab.specularGloss, 0.1f..1.0f, palette.accentTertiary) {
                     lab.specularGloss = it
                 }
-                GlassSliderRow("Aurora Bloom Glow (${(lab.auroraGlowIntensity * 100).toInt()}%)", lab.auroraGlowIntensity, 0.1f..1.0f, palette.orbPrimary) {
+                GlassSliderRow("Ambient Bloom Glow (${(lab.auroraGlowIntensity * 100).toInt()}%)", lab.auroraGlowIntensity, 0.1f..1.0f, palette.orbPrimary) {
                     lab.auroraGlowIntensity = it
                 }
             }
@@ -2099,7 +2182,7 @@ private fun GlassLabScreen(
                 GlassSliderRow("Gyroscope 3D Tilt (${(lab.gyroParallaxStrength * 100).toInt()}%)", lab.gyroParallaxStrength, 0f..1.0f, palette.accentTertiary) {
                     lab.gyroParallaxStrength = it
                 }
-                GlassSliderRow("Multi-Colour Richness (${(lab.colorRichness * 100).toInt()}%)", lab.colorRichness, 0.2f..1.0f, palette.orbSecondary) {
+                GlassSliderRow("Contrast Richness (${(lab.colorRichness * 100).toInt()}%)", lab.colorRichness, 0.2f..1.0f, palette.orbSecondary) {
                     lab.colorRichness = it
                 }
                 Spacer(modifier = Modifier.height(8.dp))
@@ -2168,7 +2251,7 @@ private fun ComponentGalleryScreen(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "SIRI / ARC-REACTOR MULTI-COLOUR ORB & 3D BUTTON KIT",
+                        text = "3D LIQUID GLASS BUTTON KIT & VOICE ORB PREVIEW",
                         color = palette.accentPrimary,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
@@ -2176,28 +2259,28 @@ private fun ComponentGalleryScreen(
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Tap the glowing sphere or any 3D glass button to test spring physics, fingertip bloom & haptics. Live state: ${orbState.name}",
+                        text = "Tap any 3D glass button to test spring physics, fingertip bloom & haptics. Live state: ${orbState.name}",
                         color = palette.textSecondary,
                         fontSize = 13.sp
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         LiquidGlassButton(
-                            text = "Primary Aurora",
+                            text = "Primary Glass",
                             icon = Icons.Default.AutoAwesome,
                             lab = lab,
                             accentColor = palette.accentPrimary,
                             onClick = onCycleOrbState
                         )
                         LiquidGlassButton(
-                            text = "Violet Pulse",
+                            text = "Slate Accent",
                             icon = Icons.Default.Bolt,
                             lab = lab,
                             accentColor = palette.accentSecondary,
                             onClick = onCycleOrbState
                         )
                         LiquidGlassButton(
-                            text = "Rose Action",
+                            text = "Alabaster Rim",
                             icon = Icons.Default.Palette,
                             lab = lab,
                             accentColor = palette.accentTertiary,
@@ -2531,7 +2614,7 @@ fun LivingAuroraBackground(
             )
         )
 
-        val glowAlpha = (lab.auroraGlowIntensity * 0.42f * voiceBoost).coerceIn(0.05f, 0.78f)
+        val glowAlpha = (lab.auroraGlowIntensity * 0.36f * voiceBoost).coerceIn(0.05f, 0.72f)
         val richness = lab.colorRichness.coerceIn(0.2f, 1f)
 
         val orb1Center = Offset(
@@ -2617,7 +2700,7 @@ fun LiquidGlassCard(
             listOf(Color.White, primaryRim, Color.White)
         } else {
             listOf(
-                Color.White.copy(alpha = (0.48f * lab.specularGloss).coerceIn(0.15f, 0.85f)),
+                Color.White.copy(alpha = (0.52f * lab.specularGloss).coerceIn(0.15f, 0.88f)),
                 primaryRim.copy(alpha = 0.55f),
                 palette.accentSecondary.copy(alpha = 0.45f),
                 palette.accentTertiary.copy(alpha = 0.35f)
@@ -2631,8 +2714,8 @@ fun LiquidGlassCard(
             .shadow(
                 elevation = (14f * lab.bevelDepth).dp,
                 shape = shape,
-                ambientColor = primaryRim.copy(alpha = 0.35f),
-                spotColor = palette.accentSecondary.copy(alpha = 0.40f)
+                ambientColor = primaryRim.copy(alpha = 0.30f),
+                spotColor = palette.accentSecondary.copy(alpha = 0.35f)
             )
             .clip(shape)
             .background(baseSurface)
@@ -2708,16 +2791,16 @@ fun LiquidGlassButton(
             .shadow(
                 elevation = if (isPressed) 4.dp else 10.dp,
                 shape = pillShape,
-                ambientColor = activeHue.copy(alpha = 0.45f),
-                spotColor = activeHue.copy(alpha = 0.55f)
+                ambientColor = activeHue.copy(alpha = 0.35f),
+                spotColor = activeHue.copy(alpha = 0.45f)
             )
             .clip(pillShape)
             .background(
                 Brush.linearGradient(
                     colors = listOf(
-                        activeHue.copy(alpha = if (isActive) 0.36f else 0.24f),
-                        palette.accentSecondary.copy(alpha = 0.18f),
-                        palette.glassSurface.copy(alpha = 0.75f)
+                        activeHue.copy(alpha = if (isActive) 0.34f else 0.20f),
+                        palette.accentSecondary.copy(alpha = 0.16f),
+                        palette.glassSurface.copy(alpha = 0.80f)
                     )
                 )
             )
@@ -2756,8 +2839,8 @@ fun LiquidGlassButton(
                 brush = Brush.linearGradient(
                     colors = listOf(
                         Color.White.copy(alpha = 0.65f * lab.specularGloss),
-                        activeHue.copy(alpha = 0.85f),
-                        palette.accentSecondary.copy(alpha = 0.55f)
+                        activeHue.copy(alpha = 0.80f),
+                        palette.accentSecondary.copy(alpha = 0.50f)
                     )
                 ),
                 shape = pillShape
@@ -2817,14 +2900,14 @@ fun LiquidGlassPillInput(
         modifier = modifier
             .fillMaxWidth()
             .defaultMinSize(minHeight = 54.dp)
-            .shadow(12.dp, shape, spotColor = palette.accentPrimary.copy(alpha = 0.35f))
+            .shadow(12.dp, shape, spotColor = palette.accentPrimary.copy(alpha = 0.30f))
             .clip(shape)
-            .background(palette.glassSurface.copy(alpha = 0.82f))
+            .background(palette.glassSurface.copy(alpha = 0.85f))
             .border(
                 width = 1.2.dp,
                 brush = Brush.linearGradient(
                     colors = listOf(
-                        Color.White.copy(alpha = 0.45f),
+                        Color.White.copy(alpha = 0.50f),
                         palette.accentPrimary.copy(alpha = 0.65f),
                         palette.accentSecondary.copy(alpha = 0.55f)
                     )
