@@ -1,11 +1,18 @@
 package com.jarvis.neet2027
 
+import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.os.PowerManager
+import android.provider.Settings
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
@@ -37,7 +44,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -116,7 +122,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jarvis.neet2027.model.NeetPlanRepository
 import com.jarvis.neet2027.model.NeetPlanRoot
-import com.jarvis.neet2027.util.XiaomiSurvivalHelper
 import kotlinx.coroutines.delay
 import java.security.KeyStore
 import java.time.LocalDate
@@ -131,9 +136,75 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
-// ============================================================================
-// 1. APPLE iOS 18 SIRI AURORA / VISION-OS MULTI-COLOUR PALETTE & GLASS STATE
-// ============================================================================
+object XiaomiSurvivalHelper {
+    fun isIgnoringBatteryOptimizations(context: Context): Boolean {
+        val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+        return pm.isIgnoringBatteryOptimizations(context.packageName)
+    }
+
+    fun hasAllFilesAccess(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else {
+            true
+        }
+    }
+
+    fun canDrawOverlays(context: Context): Boolean {
+        return Settings.canDrawOverlays(context)
+    }
+
+    fun openBatteryOptimizationDialog(context: Context) {
+        val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+            data = Uri.parse("package:${context.packageName}")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        runCatching { context.startActivity(intent) }.onFailure { openAppDetails(context) }
+    }
+
+    fun openXiaomiAutostartSettings(context: Context) {
+        val xiaomiIntents = listOf(
+            Intent().apply {
+                component = ComponentName(
+                    "com.miui.securitycenter",
+                    "com.miui.permcenter.autostart.AutoStartManagementActivity"
+                )
+            },
+            Intent("miui.intent.action.OP_AUTO_START").apply {
+                addCategory(Intent.CATEGORY_DEFAULT)
+            }
+        )
+        for (candidate in xiaomiIntents) {
+            candidate.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (runCatching { context.startActivity(candidate) }.isSuccess) return
+        }
+        openAppDetails(context)
+    }
+
+    fun openAllFilesAccessSettings(context: Context) {
+        val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+            data = Uri.parse("package:${context.packageName}")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        runCatching { context.startActivity(intent) }.onFailure { openAppDetails(context) }
+    }
+
+    fun openOverlaySettings(context: Context) {
+        val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+            data = Uri.parse("package:${context.packageName}")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        runCatching { context.startActivity(intent) }.onFailure { openAppDetails(context) }
+    }
+
+    fun openAppDetails(context: Context) {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = Uri.parse("package:${context.packageName}")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+    }
+}
 
 data class JarvisPalettePreset(
     val id: String,
@@ -286,10 +357,6 @@ private enum class JarvisNavTab(val label: String, val icon: ImageVector) {
     API_VAULT("Key Vault", Icons.Default.Key)
 }
 
-// ============================================================================
-// 2. ANDROID HARDWARE KEYSTORE AES-256-GCM SECRET VAULT & AUTOSTART STATE
-// ============================================================================
-
 object EncryptedKeyStoreVault {
     private const val ANDROID_KEYSTORE = "AndroidKeyStore"
     private const val MASTER_KEY_ALIAS = "jarvis_neet2027_aes_master_key"
@@ -379,10 +446,6 @@ object EncryptedKeyStoreVault {
             .apply()
     }
 }
-
-// ============================================================================
-// 3. MAIN ACTIVITY & ROOT SPATIAL SHELL
-// ============================================================================
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -522,10 +585,6 @@ fun JarvisChapterTwoApp() {
         }
     }
 }
-
-// ============================================================================
-// 4. SPATIAL NAVIGATION RAIL, HEADER & DASHBOARD (WITH FIXED BUTTON 2!)
-// ============================================================================
 
 @Composable
 private fun SpatialNavigationRail(
@@ -941,10 +1000,6 @@ private fun DashboardSpatialContent(
         }
     }
 }
-
-// ============================================================================
-// 5. GLASS LAB, COMPONENT GALLERY & ENCRYPTED KEY VAULT SCREENS
-// ============================================================================
 
 @Composable
 private fun GlassLabScreen(
@@ -1458,10 +1513,6 @@ private fun KeyEntryCard(
     }
 }
 
-// ============================================================================
-// 6. LIQUID GLASS 3D UI KIT & GYROSCOPE PARALLAX ENGINE
-// ============================================================================
-
 @Composable
 fun rememberGyroscopeTilt(strength: Float): Offset {
     val context = LocalContext.current
@@ -1668,7 +1719,7 @@ fun LiquidGlassCard(
             .border(width = 1.2.dp, brush = rimBrush, shape = shape)
             .padding(contentPadding)
     ) {
-        Column(content = content)
+        Column { content() }
     }
 }
 
@@ -1811,7 +1862,7 @@ fun LiquidGlassPillInput(
     lab: GlassLabController,
     modifier: Modifier = Modifier,
     leadingIcon: ImageVector? = null,
-    trailingContent: @Composable (RowScope.() -> Unit)? = null
+    trailingContent: @Composable () -> Unit = {}
 ) {
     val palette = lab.currentPalette
     val shape = RoundedCornerShape(28.dp)
@@ -1866,10 +1917,8 @@ fun LiquidGlassPillInput(
                 modifier = Modifier.fillMaxWidth()
             )
         }
-        if (trailingContent != null) {
-            Spacer(modifier = Modifier.width(8.dp))
-            trailingContent()
-        }
+        Spacer(modifier = Modifier.width(8.dp))
+        trailingContent()
     }
 }
 
