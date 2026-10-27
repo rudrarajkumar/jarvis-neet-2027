@@ -37,12 +37,10 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Shield
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,6 +57,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.jarvis.neet2027.model.NeetPlanRepository
 import com.jarvis.neet2027.model.NeetPlanRoot
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -67,10 +66,6 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-
-// ============================================================================
-// 1. AES-256 ENCRYPTED VAULT MODELS, VERSION HISTORY & D0-D30 FLASHCARDS
-// ============================================================================
 
 @Serializable
 data class VaultVersionSnapshot(
@@ -82,10 +77,10 @@ data class VaultVersionSnapshot(
 data class VaultNoteItem(
     val id: Long,
     val title: String,
-    val folder: String, // "Physics", "Chemistry", "Biology", "Mistake_Notebook", "Flashcards", "Loops_A_F"
+    val folder: String,
     val tags: List<String>,
     val markdownBody: String,
-    val recallStagesDone: List<String> = emptyList(), // ["D0", "D1", "D3", "D7", "D14", "D30"]
+    val recallStagesDone: List<String> = emptyList(),
     val errorCause: String = "NONE",
     val updatedAtIst: String,
     val versionHistory: List<VaultVersionSnapshot> = emptyList()
@@ -197,7 +192,7 @@ object JarvisVaultManager {
             saveVaultNotes(context, imported)
             Pair(imported, "Imported ${imported.size} Vault notes from ${inFile.name}")
         }.getOrElse {
-            Pair(loadVaultNotes(context), "Import error: ${it.message}")
+            Pair(loadVaultNotes(context), "Import error: ${it.message}" )
         }
     }
 
@@ -216,10 +211,6 @@ object JarvisVaultManager {
         return km.isDeviceSecure
     }
 
-    /**
-     * Share-to-Jarvis Auto-Tagger: classifies shared text or file URIs into the right
-     * subject track and chapter inside `/storage/emulated/0/0.Neet 2027` & Vault.
-     */
     fun handleSharedIncomingIntent(context: Context, intent: Intent?): String? {
         if (intent == null || intent.action != Intent.ACTION_SEND) return null
         val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)
@@ -339,7 +330,7 @@ object JarvisVaultManager {
                     Q: What is the priority order of electronic effects for carbocation/alkene stability?
                     ---
                     A: Aromaticity > Resonance (+M/-M) > Hyperconjugation (count α-H) > Inductive (+I/-I).
-                     Teacher Note (Pankaj Sijariya Sir): Always check α-H count before inductive effect in NEET MCQs.
+                    Teacher Note (Pankaj Sijariya Sir): Always check α-H count before inductive effect in NEET MCQs.
                 """.trimIndent(),
                 recallStagesDone = listOf("D0", "D1", "D3"),
                 errorCause = "MISSING_CONCEPT",
@@ -363,10 +354,6 @@ object JarvisVaultManager {
     }
 }
 
-// ============================================================================
-// 2. AUTONOMOUS TOOL-CALLING ROUTER (WITH DESTRUCTIVE ACTION CONFIRMATION)
-// ============================================================================
-
 data class ToolExecutionOutcome(
     val toolExecuted: Boolean,
     val toolSummaryBanner: String,
@@ -374,15 +361,6 @@ data class ToolExecutionOutcome(
 )
 
 object JarvisAutonomousToolRouter {
-    /**
-     * Inspects user query & Jarvis response for autonomous tool intents:
-     * - Save note / mistake / flashcard to Vault
-     * - Search `0.Neet 2027` Permanent PDF Memory
-     * - Set system alarm for study slot
-     * - Tick completed lecture in progress tracker
-     * - Add event to NEET Calendar
-     * - Delete Vault note (requires explicit user confirmation!)
-     */
     fun evaluateAndRunAutonomousTools(
         context: Context,
         plan: NeetPlanRoot,
@@ -391,7 +369,6 @@ object JarvisAutonomousToolRouter {
         val q = userQuery.trim()
         val lower = q.lowercase()
 
-        // 1. Destructive Action Check -> NEVER execute silently; return confirmation request
         if ((lower.contains("delete") || lower.contains("remove") || lower.contains("wipe")) &&
             (lower.contains("vault") || lower.contains("note"))
         ) {
@@ -411,7 +388,6 @@ object JarvisAutonomousToolRouter {
             }
         }
 
-        // 2. Autonomous Mistake Logger / Vault Note Creator
         if (lower.startsWith("save note:") || lower.startsWith("log mistake:") || lower.contains("save this to vault")) {
             val body = q.substringAfter(":").trim().ifBlank { q }
             val (folder, tags) = JarvisVaultManager.autoTagContent(body)
@@ -432,7 +408,6 @@ object JarvisAutonomousToolRouter {
             )
         }
 
-        // 3. Autonomous Alarm Tool ("set alarm for 10:30" or "wake me at 10:00")
         val timeMatch = Regex("""(?:alarm|remind)\s+(?:at|for)\s+(\d{1,2}):(\d{2})""").find(lower)
         if (timeMatch != null) {
             val h = timeMatch.groupValues[1].toIntOrNull() ?: 10
@@ -444,7 +419,6 @@ object JarvisAutonomousToolRouter {
             )
         }
 
-        // 4. Autonomous Calendar Event Tool ("schedule test on 2026-11-22: ...")
         if (lower.startsWith("add event:") || lower.startsWith("schedule test:")) {
             val title = q.substringAfter(":").trim().ifBlank { "NEET Checkpoint Test" }
             val events = NeetCoreStore.loadCustomEvents(context).toMutableList()
@@ -467,10 +441,6 @@ object JarvisAutonomousToolRouter {
         return ToolExecutionOutcome(toolExecuted = false, toolSummaryBanner = "")
     }
 }
-
-// ============================================================================
-// 3. CHAPTER 6 UI: AES-256 VAULT, MISTAKE NOTEBOOK, FLASHCARDS & TOOL CENTER
-// ============================================================================
 
 @Composable
 fun EditableVaultAndToolsScreen(
@@ -497,7 +467,6 @@ fun EditableVaultAndToolsScreen(
     var searchQuery by remember { mutableStateOf("") }
     var selectedNote by remember { mutableStateOf<VaultNoteItem?>(vaultNotes.firstOrNull()) }
 
-    // Editor States
     var editTitle by remember(selectedNote) { mutableStateOf(selectedNote?.title ?: "") }
     var editFolder by remember(selectedNote) { mutableStateOf(selectedNote?.folder ?: "Mistake_Notebook") }
     var editTags by remember(selectedNote) { mutableStateOf(selectedNote?.tags?.joinToString(", ") ?: "NEET2027") }
@@ -505,7 +474,6 @@ fun EditableVaultAndToolsScreen(
     var editErrorCause by remember(selectedNote) { mutableStateOf(selectedNote?.errorCause ?: "NONE") }
     var editRecallStages by remember(selectedNote) { mutableStateOf(selectedNote?.recallStagesDone ?: listOf("D0")) }
 
-    // Flashcard Flip & Destructive Confirmation State
     var flashcardFlipped by remember { mutableStateOf(false) }
     var showVersionHistory by remember { mutableStateOf(false) }
     var pendingDeleteNote by remember { mutableStateOf<VaultNoteItem?>(null) }
@@ -526,7 +494,6 @@ fun EditableVaultAndToolsScreen(
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        // 1. Top AES-256 Biometric/PIN Lock & Backup Bar
         LiquidGlassCard(lab = lab, tilt = tilt, accentTint = JarvisSpatialPalettes.StatusSuccess) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -639,7 +606,6 @@ fun EditableVaultAndToolsScreen(
         }
 
         if (isVaultUnlocked) {
-            // 2. Autonomous Tool-Calling Sandbox Bar
             LiquidGlassCard(lab = lab, tilt = tilt, accentTint = JarvisSpatialPalettes.StatusWarning) {
                 Text(
                     text = "AUTONOMOUS TOOL-CALLING COMMAND BAR (SAVE NOTES, LOG MISTAKES, ARM ALARMS, SCHEDULE TESTS)",
@@ -687,7 +653,6 @@ fun EditableVaultAndToolsScreen(
                 )
             }
 
-            // 3. Folder Filter Chips + Search Bar + New Note / Flashcard Buttons
             LiquidGlassCard(lab = lab, tilt = tilt) {
                 Row(
                     modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -751,12 +716,10 @@ fun EditableVaultAndToolsScreen(
                 }
             }
 
-            // 4. Two-Column Split: Vault Note List (Left) + Markdown Editor / Flashcard Flip / Version History (Right)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // Left Column: Vault Items
                 LiquidGlassCard(lab = lab, tilt = tilt, modifier = Modifier.weight(0.44f)) {
                     Text(
                         text = "ENCRYPTED VAULT ITEMS (${visibleNotes.size})",
@@ -813,9 +776,7 @@ fun EditableVaultAndToolsScreen(
                     }
                 }
 
-                // Right Column: Markdown Editor + D0-D30 Spaced Repetition Checkboxes + Flashcard Flip + Version History
                 LiquidGlassCard(lab = lab, tilt = tilt, modifier = Modifier.weight(0.56f)) {
-                    // Destructive Delete Confirmation Banner
                     if (pendingDeleteNote != null) {
                         Row(
                             modifier = Modifier
@@ -887,7 +848,6 @@ fun EditableVaultAndToolsScreen(
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
-                    // D0 / D1 / D3 / D7 / D14 / D30 Spaced Repetition Checkboxes
                     Row(
                         modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -909,7 +869,6 @@ fun EditableVaultAndToolsScreen(
                     }
 
                     Spacer(modifier = Modifier.height(10.dp))
-                    // If folder is Flashcards and contains "---", offer interactive 3D card flip preview
                     if (editFolder == "Flashcards" && editBody.contains("---")) {
                         val parts = editBody.split("---")
                         val front = parts.getOrNull(0)?.trim().orEmpty()
@@ -943,7 +902,6 @@ fun EditableVaultAndToolsScreen(
                         Spacer(modifier = Modifier.height(8.dp))
                     }
 
-                    // Markdown Body Editor
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
