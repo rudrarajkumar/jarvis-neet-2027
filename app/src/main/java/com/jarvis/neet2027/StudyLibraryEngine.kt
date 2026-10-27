@@ -1,12 +1,11 @@
 package com.jarvis.neet2027
 
 import android.content.Context
-import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
-import android.net.Uri
 import android.os.Environment
 import android.os.ParcelFileDescriptor
+import android.util.Base64
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -26,21 +25,15 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
-import androidx.compose.material.icons.filled.Send
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -64,16 +57,46 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.jarvis.neet2027.model.NeetPlanRepository
 import com.jarvis.neet2027.model.NeetPlanRoot
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.addJsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
+import java.io.BufferedReader
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.InputStreamReader
+import java.net.HttpURLConnection
+import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import java.util.zip.ZipInputStream
+import java.util.zip.Inflater
+
+@Serializable
+data class PermanentPdfMemory(
+    val relativePath: String,
+    val fileName: String,
+    val fileSizeKb: Long,
+    val lastModifiedMillis: Long,
+    val pageCount: Int,
+    val subjectTrack: String,
+    val subCategory: String, // e.g., "OC / Ch 09 Biomolecules / DppNotes" or "notes"
+    val matchedChapter: String,
+    val extractedMemoryText: String,
+    val deepVisionMemorized: Boolean = false,
+    val memorizedAtIst: String
+)
 
 data class IndexedStudyFile(
     val file: File,
@@ -83,137 +106,77 @@ data class IndexedStudyFile(
     val sizeKb: Long,
     val lastModifiedIst: String,
     val extractedSnippet: String,
-    val matchedChapter: String
+    val matchedChapter: String,
+    val subjectTrack: String = "",
+    val folderCategory: String = "",
+    val isVideoMetadataOnly: Boolean = false,
+    val isPdfMemorizedPermanently: Boolean = false,
+    val pdfPageCount: Int = 0
 )
 
 object StudyLibraryManager {
-    private const val PREFS_NAME = "jarvis_study_library_prefs"
-    private const val KEY_CUSTOM_FOLDER = "dedicated_folder_path"
+    private const val EXACT_NEET_FOLDER_NAME = "0.Neet 2027"
+    private const val MEMORY_DB_FILENAME = "jarvis_permanent_pdf_memories.json"
+    private val jsonFormat = Json { ignoreUnknownKeys = true; prettyPrint = false }
+
+    // In-RAM mirror of the permanent on-disk PDF memory database so PDFs are never re-read
+    private val memoryCache = mutableMapOf<String, PermanentPdfMemory>()
+    private var memoryLoadedFromDisk = false
 
     fun getDedicatedRootFolder(context: Context): File {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val defaultRoot = File(Environment.getExternalStorageDirectory(), "JarvisNEET2027")
-        val savedPath = prefs.getString(KEY_CUSTOM_FOLDER, defaultRoot.absolutePath) ?: defaultRoot.absolutePath
-        val folder = File(savedPath)
-        if (!folder.exists()) {
-            runCatching { folder.mkdirs() }
+        val extRoot = Environment.getExternalStorageDirectory()
+        val exactFolder = File(extRoot, EXACT_NEET_FOLDER_NAME)
+        if (exactFolder.exists()) return exactFolder
+
+        // Fallback case-insensitive check in /storage/emulated/0/ if needed
+        val matched = extRoot.listFiles()?.firstOrNull {
+            it.isDirectory && it.name.equals(EXACT_NEET_FOLDER_NAME, ignoreCase = true)
         }
-        // Ensure safety subfolders exist
-        runCatching {
-            File(folder, "Lectures").mkdirs()
-            File(folder, "Notes").mkdirs()
-            File(folder, "NCERT_PDFs").mkdirs()
-            File(folder, "Jarvis_AI_Notes").mkdirs()
-            File(folder, ".jarvis_snapshots").mkdirs()
-            File(folder, ".jarvis_trash").mkdirs()
-        }
-        return folder
+        return matched ?: exactFolder
     }
 
-    fun isInsideSandbox(root: File, target: File): Boolean {
-        return runCatching {
-            target.canonicalPath.startsWith(root.canonicalPath)
-        }.getOrDefault(false)
+    private fun getPermanentMemoryFile(context: Context, rootFolder: File): File {
+        // Store in app-private internal storage AND mirror inside 0.Neet 2027/.jarvis_pdf_memory.json
+        val mirror = File(rootFolder, ".jarvis_pdf_memory.json")
+        return if (rootFolder.exists() && rootFolder.canWrite()) mirror
+        else File(context.filesDir, MEMORY_DB_FILENAME)
     }
 
-    fun appendAuditLog(root: File, action: String, detail: String) {
-        runCatching {
-            val logFile = File(root, ".jarvis_audit.log")
-            val stamp = SimpleDateFormat("yyyy-MM-dd hh:mm:ss a", Locale.US).format(Date())
-            logFile.appendText("[$stamp IST] $action: $detail\n")
-        }
-    }
-
-    fun readAuditLog(root: File): String {
-        val logFile = File(root, ".jarvis_audit.log")
-        if (!logFile.exists()) return "Audit log empty. Every create, edit, snapshot, move, and delete is recorded here."
-        return runCatching {
-            logFile.readLines().takeLast(18).reversed().joinToString("\n")
-        }.getOrDefault("Unable to read audit log.")
-    }
-
-    fun seedStarterNeetFiles(root: File) {
-        val samples = mapOf(
-            "Notes/Rotational_Motion_Notes.md" to """
-                # Rotational Motion — Compressed NCERT & PW Formula Notes
-                - **Page 1 | Moment of Inertia (I)**: I = Σ mᵢ rᵢ² | Ring: MR² | Disc: ½MR² | Solid Sphere: (2/5)MR² | Hollow Sphere: (2/3)MR².
-                - **Page 2 | Theorems**: Parallel Axis: I = I_cm + Md² | Perpendicular Axis (2D lamina): I_z = I_x + I_y.
-                - **Page 3 | Rolling Without Slipping**: v_cm = Rω | Kinetic Energy K_total = ½mv_cm² (1 + k²/R²).
-                - **Acceleration on Inclined Plane (θ)**: a = g sinθ / (1 + k²/R²) — Solid sphere beats hollow sphere every time!
-                - **Wrong Question ID #RM-14**: Forgot to check if cylinder was hollow or solid; always underline geometry in NEET question stem.
-            """.trimIndent(),
-            "Notes/Electric_Charges_And_Fields_L01.md" to """
-                # Electric Charges & Fields — Class 12 Physics Track (Day 1)
-                - **Page 1 | Coulomb's Law**: F = (1 / 4πε₀) · |q₁q₂| / r² where 1/(4πε₀) = 9 × 10⁹ N·m²/C².
-                - **Page 2 | Electric Dipole Field**:
-                  * Axial line: E_axial = (1 / 4πε₀) · (2p / r³) (along p vector)
-                  * Equatorial line: E_eq = (1 / 4πε₀) · (p / r³) (opposite to p vector)
-                  * Torque in uniform field: τ = p × E = pE sinθ | Potential Energy: U = -p · E = -pE cosθ.
-                - **Page 3 | Gauss's Law**: Φ_E = ∮ E · dA = q_enclosed / ε₀ (independent of Gaussian surface size or shape).
-            """.trimIndent(),
-            "Notes/GOC_Organic_Basics_L01.md" to """
-                # General Organic Chemistry (GOC) — Electronic Effects & Stability
-                - **Page 1 | Priority Rule**: Aromaticity > Resonance (+M/-M) > Hyperconjugation (α-H count) > Inductive (+I/-I).
-                - **Page 2 | Carbocation Stability**: (C₆H₅)₃C⁺ > (CH₃)₃C⁺ (9 α-H) > (CH₃)₂CH⁺ (6 α-H) > CH₃CH₂⁺ (3 α-H).
-                - **Page 3 | Acidity Order**: -SO₃H > -COOH > Phenol > H₂O > ROH > HC≡CH.
-            """.trimIndent(),
-            "Notes/Biomolecules_Zoology_NCERT.md" to """
-                # Biomolecules (Zoology) — NCERT Class 11 Chapter 9
-                - **Page 1 | NCERT Table 9.4 (Secondary Metabolites)**:
-                  * Pigments: Carotenoids, Anthocyanins
-                  * Alkaloids: Morphine, Codeine
-                  * Terpenoides: Monoterpenes, Diterpenes
-                  * Lectins: Concanavalin A
-                  * Drugs: Vinblastin, Curcumin
-                - **Page 2 | Enzyme Kinetics**: Competitive inhibitor (e.g. malonate inhibiting succinic dehydrogenase) increases K_m without changing V_max.
-            """.trimIndent(),
-            "Notes/Oscillations_SHM_Track4.md" to """
-                # Oscillations (SHM) — Track 4 Physics
-                - **Page 1 | Kinematics**: x(t) = A sin(ωt + φ) | v = ω√(A² - x²) | a = -ω²x.
-                - **Page 2 | Energy in SHM**: Total Energy E = ½mω²A² (constant); KE and PE oscillate at frequency 2f.
-            """.trimIndent()
+    @Synchronized
+    fun ensurePermanentMemoriesLoaded(context: Context, rootFolder: File) {
+        if (memoryLoadedFromDisk) return
+        val candidates = listOf(
+            File(rootFolder, ".jarvis_pdf_memory.json"),
+            File(context.filesDir, MEMORY_DB_FILENAME)
         )
-        samples.forEach { (relPath, content) ->
-            val f = File(root, relPath)
-            f.parentFile?.mkdirs()
-            if (!f.exists()) {
-                f.writeText(content)
+        for (dbFile in candidates) {
+            if (dbFile.exists()) {
+                runCatching {
+                    val raw = dbFile.readText()
+                    val list = jsonFormat.decodeFromString<List<PermanentPdfMemory>>(raw)
+                    list.forEach { memoryCache[it.relativePath] = it }
+                }
+                if (memoryCache.isNotEmpty()) break
             }
         }
-        appendAuditLog(root, "SEED_STARTER_PACK", "Created 5 NCERT & PW starter notes in Notes/")
+        memoryLoadedFromDisk = true
     }
 
-    fun extractTextFromFile(file: File): String {
-        val ext = file.extension.lowercase()
-        return runCatching {
-            when (ext) {
-                "txt", "md", "json", "csv", "log" -> file.readText().take(8000)
-                "docx", "pptx" -> extractXmlFromZipOfficeFile(file)
-                "pdf" -> {
-                    val pages = getPdfPageCount(file)
-                    "PDF Document (${file.name}, $pages pages). Open in viewer to render pages or run Jarvis Vision OCR."
-                }
-                "mp4", "mkv", "webm" -> "Physics Wallah Lecture Video (${file.name}). Supports timestamp jump (e.g. 25:30)."
-                else -> "Binary/Media file (${file.name}, ${file.length() / 1024} KB)."
-            }
-        }.getOrDefault("File: ${file.name}")
-    }
-
-    private fun extractXmlFromZipOfficeFile(file: File): String {
-        val sb = StringBuilder()
-        ZipInputStream(file.inputStream()).use { zis ->
-            var entry = zis.nextEntry
-            while (entry != null) {
-                if (entry.name.endsWith(".xml") && (entry.name.contains("document") || entry.name.contains("slide"))) {
-                    val xml = zis.bufferedReader().readText()
-                    val stripped = xml.replace(Regex("<[^>]+>"), " ").replace(Regex("\\s+"), " ").trim()
-                    sb.append(stripped).append("\n")
-                }
-                entry = zis.nextEntry
+    @Synchronized
+    fun savePermanentMemoriesToDisk(context: Context, rootFolder: File) {
+        val list = memoryCache.values.toList()
+        val raw = runCatching { jsonFormat.encodeToString(list) }.getOrDefault("[]")
+        runCatching {
+            File(context.filesDir, MEMORY_DB_FILENAME).writeText(raw)
+        }
+        runCatching {
+            if (rootFolder.exists()) {
+                File(rootFolder, ".jarvis_pdf_memory.json").writeText(raw)
             }
         }
-        return sb.toString().take(8000).ifBlank { "Office Document: ${file.name}" }
     }
+
+    fun getAllPermanentMemories(): List<PermanentPdfMemory> = memoryCache.values.toList()
 
     fun getPdfPageCount(file: File): Int {
         return runCatching {
@@ -223,15 +186,15 @@ object StudyLibraryManager {
         }.getOrDefault(0)
     }
 
-    fun renderPdfPageToBitmap(file: File, pageIndex: Int): Bitmap? {
+    fun renderPdfPageToBitmap(file: File, pageIndex: Int, maxDim: Int = 1400): Bitmap? {
         return runCatching {
             ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
                 PdfRenderer(pfd).use { renderer ->
                     if (renderer.pageCount <= 0) return null
                     val safeIdx = pageIndex.coerceIn(0, renderer.pageCount - 1)
                     renderer.openPage(safeIdx).use { page ->
-                        val width = (page.width * 2).coerceIn(600, 1800)
-                        val height = (page.height * 2).coerceIn(800, 2400)
+                        val width = (page.width * 2).coerceIn(500, maxDim)
+                        val height = (page.height * 2).coerceIn(700, maxDim + 400)
                         val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
                         bmp.eraseColor(android.graphics.Color.WHITE)
                         page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
@@ -242,77 +205,367 @@ object StudyLibraryManager {
         }.getOrNull()
     }
 
-    fun saveFileWithSnapshot(root: File, targetFile: File, newContent: String): Boolean {
-        if (!isInsideSandbox(root, targetFile)) return false
-        return runCatching {
-            if (targetFile.exists()) {
-                val snapDir = File(root, ".jarvis_snapshots").apply { mkdirs() }
-                val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-                val snapFile = File(snapDir, "${targetFile.name}.$stamp.bak")
-                targetFile.copyTo(snapFile, overwrite = true)
-            }
-            targetFile.parentFile?.mkdirs()
-            targetFile.writeText(newContent)
-            appendAuditLog(root, "SAVE_WITH_SNAPSHOT", targetFile.name)
-            true
-        }.getOrDefault(false)
-    }
+    /**
+     * Reads a PDF ONCE and extracts embedded text streams + structural syllabus metadata
+     * without ever needing to re-read the PDF on future launches.
+     */
+    private fun readPdfOnceAndBuildPermanentMemory(
+        file: File,
+        relativePath: String,
+        subjectTrack: String,
+        subCategory: String,
+        matchedChapter: String
+    ): PermanentPdfMemory {
+        val pages = getPdfPageCount(file)
+        val embeddedText = extractEmbeddedPdfTextOnce(file)
+        val teacherMatch = Regex("""By\s+([A-Za-z\s]+Sir)""", RegexOption.IGNORE_CASE)
+            .find(file.name)?.groupValues?.getOrNull(1)?.trim() ?: "PW / NEET Faculty"
 
-    fun moveFileToTrash(root: File, targetFile: File): Boolean {
-        if (!isInsideSandbox(root, targetFile) || !targetFile.exists()) return false
-        return runCatching {
-            val trashDir = File(root, ".jarvis_trash").apply { mkdirs() }
-            val dest = File(trashDir, targetFile.name)
-            if (dest.exists()) dest.delete()
-            val moved = targetFile.renameTo(dest)
-            if (moved) appendAuditLog(root, "MOVE_TO_TRASH", targetFile.name)
-            moved
-        }.getOrDefault(false)
-    }
-
-    fun restoreAllFromTrash(root: File): Int {
-        val trashDir = File(root, ".jarvis_trash")
-        if (!trashDir.exists()) return 0
-        val notesDir = File(root, "Notes").apply { mkdirs() }
-        var count = 0
-        trashDir.listFiles()?.forEach { f ->
-            val dest = File(notesDir, f.name)
-            if (f.renameTo(dest)) count++
+        val summaryBuilder = StringBuilder()
+        summaryBuilder.append("PERMANENT PDF MEMORY // Path: $relativePath\n")
+        summaryBuilder.append("Track: $subjectTrack | Folder: $subCategory | Chapter: $matchedChapter | Pages: $pages | Faculty: $teacherMatch\n")
+        if (embeddedText.isNotBlank()) {
+            summaryBuilder.append("Extracted PDF Content:\n").append(embeddedText.take(3500))
+        } else {
+            summaryBuilder.append(
+                "Slide/Handwritten PDF ($pages pages, ${file.length() / 1024} KB). " +
+                    "Indexed permanently under $matchedChapter ($subCategory). " +
+                    "Tap 'Deep Vision Memorize' in Library to OCR slide diagrams & handwritten reactions into permanent memory."
+            )
         }
-        if (count > 0) appendAuditLog(root, "RESTORE_TRASH", "Restored $count files to Notes/")
-        return count
+
+        val stamp = SimpleDateFormat("dd MMM yyyy hh:mm a", Locale.US).format(Date())
+        return PermanentPdfMemory(
+            relativePath = relativePath,
+            fileName = file.name,
+            fileSizeKb = (file.length() / 1024L).coerceAtLeast(1L),
+            lastModifiedMillis = file.lastModified(),
+            pageCount = pages,
+            subjectTrack = subjectTrack,
+            subCategory = subCategory,
+            matchedChapter = matchedChapter,
+            extractedMemoryText = summaryBuilder.toString(),
+            deepVisionMemorized = embeddedText.length > 180,
+            memorizedAtIst = stamp
+        )
     }
 
+    /**
+     * Pure-Kotlin one-time PDF text stream extractor (decompresses FlateDecode streams
+     * and reads PDF text blocks `( ... ) Tj` / `[ ... ] TJ` up to 3.5 MB).
+     */
+    private fun extractEmbeddedPdfTextOnce(file: File): String {
+        return runCatching {
+            val maxBytes = minOf(file.length(), 3_500_000L).toInt()
+            val rawBytes = ByteArray(maxBytes)
+            file.inputStream().use { it.read(rawBytes, 0, maxBytes) }
+            val rawLatin = String(rawBytes, Charsets.ISO_8859_1)
+
+            val extractedChunks = mutableListOf<String>()
+            val streamRegex = Regex("""stream\r?\n([\s\S]*?)\r?\nendstream""")
+            val textLiteralRegex = Regex("""\(([^()\\]{2,120})\)""")
+
+            for (match in streamRegex.findAll(rawLatin)) {
+                val content = match.groupValues[1]
+                val streamBytes = content.toByteArray(Charsets.ISO_8859_1)
+                val decompressed = runCatching {
+                    val inflater = Inflater()
+                    inflater.setInput(streamBytes)
+                    val out = ByteArrayOutputStream()
+                    val buf = ByteArray(4096)
+                    while (!inflater.finished() && out.size() < 65536) {
+                        val count = inflater.inflate(buf)
+                        if (count <= 0) break
+                        out.write(buf, 0, count)
+                    }
+                    inflater.end()
+                    out.toString("ISO-8859-1")
+                }.getOrDefault(content)
+
+                for (lit in textLiteralRegex.findAll(decompressed)) {
+                    val token = lit.groupValues[1]
+                        .replace("\\n", " ")
+                        .replace("\\r", " ")
+                        .trim()
+                    if (token.count { it.isLetterOrDigit() } >= 3) {
+                        extractedChunks.add(token)
+                    }
+                    if (extractedChunks.size >= 350) break
+                }
+                if (extractedChunks.size >= 350) break
+            }
+            extractedChunks.joinToString(" ")
+                .replace(Regex("\\s+"), " ")
+                .trim()
+                .take(3500)
+        }.getOrDefault("")
+    }
+
+    /**
+     * Deep Vision OCR / Slide Memory Extractor: renders pages 1..3 of a handwritten/slide PDF
+     * once, sends them to Gemini Flash, and saves the extracted formulas/reactions permanently.
+     */
+    suspend fun deepMemorizePdfWithVision(
+        context: Context,
+        rootFolder: File,
+        target: IndexedStudyFile,
+        modelId: String
+    ): Result<PermanentPdfMemory> = withContext(Dispatchers.IO) {
+        val apiKey = EncryptedKeyStoreVault.readSecret(context, EncryptedKeyStoreVault.KEY_GEMINI_API)
+        if (apiKey.isBlank()) {
+            return@withContext Result.failure(IllegalStateException("Add your Gemini API key in Key Vault first."))
+        }
+        runCatching {
+            val pagesToScan = minOf(target.pdfPageCount.coerceAtLeast(1), 3)
+            val base64Pages = mutableListOf<String>()
+            for (p in 0 until pagesToScan) {
+                val bmp = renderPdfPageToBitmap(target.file, p, maxDim = 1024)
+                if (bmp != null) {
+                    val bos = ByteArrayOutputStream()
+                    bmp.compress(Bitmap.CompressFormat.JPEG, 72, bos)
+                    base64Pages.add(Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP))
+                }
+            }
+
+            val chosenModel = modelId.ifBlank { "gemini-2.5-flash" }
+            val candidates = listOf(chosenModel, "gemini-2.5-flash", "gemini-3-flash-preview").distinct()
+            var visionSummary = ""
+
+            for (mod in candidates) {
+                val attempt = runCatching {
+                    val url = URL("https://generativelanguage.googleapis.com/v1beta/models/$mod:generateContent?key=$apiKey")
+                    val payload = buildJsonObject {
+                        putJsonArray("contents") {
+                            addJsonObject {
+                                put("role", "user")
+                                putJsonArray("parts") {
+                                    addJsonObject {
+                                        put(
+                                            "text",
+                                            "You are J.A.R.V.I.S. Read these pages from '${target.relativePath}' " +
+                                                "(Chapter: ${target.matchedChapter}) and create a permanent, dense NEET UG 2027 " +
+                                                "memory sheet containing: 1) Every formula/reaction/mechanism shown, " +
+                                                "2) Key NCERT definitions & exceptions, 3) Any DPP/question concepts."
+                                        )
+                                    }
+                                    base64Pages.forEach { b64 ->
+                                        addJsonObject {
+                                            putJsonObject("inlineData") {
+                                                put("mimeType", "image/jpeg")
+                                                put("data", b64)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    val conn = (url.openConnection() as HttpURLConnection).apply {
+                        requestMethod = "POST"
+                        setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                        doOutput = true
+                        connectTimeout = 20000
+                        readTimeout = 30000
+                    }
+                    conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+                    val code = conn.responseCode
+                    val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+                    val body = BufferedReader(InputStreamReader(stream)).use { it.readText() }
+                    if (code !in 200..299) throw IllegalStateException("HTTP $code")
+                    val root = jsonFormat.parseToJsonElement(body).jsonObject
+                    root["candidates"]?.jsonArray?.firstOrNull()?.jsonObject
+                        ?.get("content")?.jsonObject
+                        ?.get("parts")?.jsonArray?.firstOrNull()?.jsonObject
+                        ?.get("text")?.jsonPrimitive?.content.orEmpty()
+                }
+                if (attempt.isSuccess && attempt.getOrThrow().isNotBlank()) {
+                    visionSummary = attempt.getOrThrow()
+                    break
+                }
+            }
+
+            if (visionSummary.isBlank()) {
+                throw IllegalStateException("Vision OCR returned empty text.")
+            }
+
+            val stamp = SimpleDateFormat("dd MMM yyyy hh:mm a", Locale.US).format(Date())
+            val updated = PermanentPdfMemory(
+                relativePath = target.relativePath,
+                fileName = target.name,
+                fileSizeKb = target.sizeKb,
+                lastModifiedMillis = target.file.lastModified(),
+                pageCount = target.pdfPageCount,
+                subjectTrack = target.subjectTrack,
+                subCategory = target.folderCategory,
+                matchedChapter = target.matchedChapter,
+                extractedMemoryText = "DEEP PERMANENT PDF MEMORY (${target.relativePath}):\n$visionSummary",
+                deepVisionMemorized = true,
+                memorizedAtIst = stamp
+            )
+            synchronized(this) {
+                memoryCache[target.relativePath] = updated
+                savePermanentMemoriesToDisk(context, rootFolder)
+            }
+            updated
+        }
+    }
+
+    private fun parseFolderHierarchy(relativePath: String, plan: NeetPlanRoot): Triple<String, String, String> {
+        val segments = relativePath.split("/").filter { it.isNotBlank() }
+        val topFolder = segments.firstOrNull().orEmpty()
+
+        val subjectTrack = when {
+            topFolder.contains("Biology", ignoreCase = true) -> "Biology_360p (Biology Track)"
+            topFolder.contains("Chemistry", ignoreCase = true) -> {
+                val sub = segments.getOrNull(1).orEmpty()
+                if (sub.equals("OC", ignoreCase = true)) "Chemistry_360p • OC (Organic)"
+                else if (sub.equals("IOC", ignoreCase = true)) "Chemistry_360p • IOC (Inorganic)"
+                else "Chemistry_360p"
+            }
+            topFolder.contains("Physics", ignoreCase = true) -> "Physics_360p (Physics Track)"
+            topFolder.contains("MATERIALS", ignoreCase = true) -> "MATERIALS NEEDED_360p"
+            else -> "0.Neet 2027 Root"
+        }
+
+        val parentFolder = segments.dropLast(1).lastOrNull().orEmpty()
+        val folderCategory = when {
+            parentFolder.equals("DppNotes", ignoreCase = true) -> "DppNotes (DPP PDF)"
+            parentFolder.equals("notes", ignoreCase = true) -> "notes (Class Notes PDF)"
+            parentFolder.equals("videos", ignoreCase = true) -> "videos (Lecture Video Metadata Only)"
+            else -> parentFolder.ifBlank { "Root Study Plan" }
+        }
+
+        // Detect Chapter folder (e.g. "Ch 09 Biomolecules", "Ch-03 Organic Chemistry ... GOC_360p")
+        val chapterSegment = segments.firstOrNull {
+            it.startsWith("Ch", ignoreCase = true) ||
+                it.contains("Biomolecules", ignoreCase = true) ||
+                it.contains("Hydrocarbon", ignoreCase = true) ||
+                it.contains("GOC", ignoreCase = true) ||
+                it.contains("Aldehyde", ignoreCase = true) ||
+                it.contains("Amine", ignoreCase = true) ||
+                it.contains("Haloalkane", ignoreCase = true) ||
+                it.contains("Alcohol", ignoreCase = true)
+        } ?: segments.dropLast(1).lastOrNull() ?: "NEET 2027 Master Plan"
+
+        return Triple(subjectTrack, folderCategory, chapterSegment)
+    }
+
+    /**
+     * Scans `/storage/emulated/0/0.Neet 2027` and all subfolders recursively.
+     * - Videos (.mp4/.mkv/.webm): maps path, chapter, lecture number & size WITHOUT reading or playing video bytes.
+     * - PDFs (.pdf): checks Permanent Memory Bank first; if not yet memorized, reads the PDF ONCE and stores it permanently!
+     */
     suspend fun indexAllStudyFiles(root: File, plan: NeetPlanRoot): List<IndexedStudyFile> = withContext(Dispatchers.IO) {
         if (!root.exists()) return@withContext emptyList()
-        val allChapters = buildList {
-            plan.chapterQueues.values.flatten().forEach { add(it.chapter) }
-            plan.oldChapterRecallLoops.flatMap { it.chapters }.forEach { add(it) }
-        }
-        val fmt = SimpleDateFormat("dd MMM HH:mm", Locale.US)
 
-        root.walkTopDown()
-            .filter { it.isFile && !it.name.startsWith(".") && !it.absolutePath.contains(".jarvis_") }
+        // Load existing permanent PDF memories from disk if not loaded yet
+        val existingDbFile = File(root, ".jarvis_pdf_memory.json")
+        if (!memoryLoadedFromDisk && existingDbFile.exists()) {
+            runCatching {
+                val list = jsonFormat.decodeFromString<List<PermanentPdfMemory>>(existingDbFile.readText())
+                synchronized(this@StudyLibraryManager) {
+                    list.forEach { memoryCache[it.relativePath] = it }
+                    memoryLoadedFromDisk = true
+                }
+            }
+        }
+
+        val fmt = SimpleDateFormat("dd/MM | HH:mm", Locale.US)
+        var newMemoriesAdded = false
+
+        val results = root.walkTopDown()
+            .filter { it.isFile && !it.name.startsWith(".") }
             .map { file ->
                 val rel = file.absolutePath.removePrefix(root.absolutePath).removePrefix("/")
-                val snippet = extractTextFromFile(file)
-                val matched = allChapters.firstOrNull { ch ->
-                    val token = ch.substringBefore("(").substringBefore("/").trim()
-                    token.length >= 4 && (file.name.contains(token, ignoreCase = true) || snippet.contains(token, ignoreCase = true))
-                } ?: "General NEET 2027"
-                IndexedStudyFile(
-                    file = file,
-                    relativePath = rel,
-                    name = file.name,
-                    extension = file.extension.lowercase(),
-                    sizeKb = (file.length() / 1024L).coerceAtLeast(1L),
-                    lastModifiedIst = fmt.format(Date(file.lastModified())),
-                    extractedSnippet = snippet,
-                    matchedChapter = matched
-                )
+                val ext = file.extension.lowercase()
+                val sizeKb = (file.length() / 1024L).coerceAtLeast(1L)
+                val (subjectTrack, folderCategory, matchedChapter) = parseFolderHierarchy(rel, plan)
+
+                val isVideo = ext in listOf("mp4", "mkv", "webm", "avi", "mov")
+
+                if (isVideo) {
+                    // STRICT RULE: Never read video file bytes or play video files directly! Only map metadata.
+                    val sizeMb = "%.2f MB".format(file.length().toDouble() / (1024.0 * 1024.0))
+                    IndexedStudyFile(
+                        file = file,
+                        relativePath = rel,
+                        name = file.name,
+                        extension = ext,
+                        sizeKb = sizeKb,
+                        lastModifiedIst = fmt.format(Date(file.lastModified())),
+                        extractedSnippet = "VIDEO CATALOGUE MAP ONLY (Not opened/played directly) // Track: $subjectTrack | Chapter: $matchedChapter | Lecture File: ${file.name} ($sizeMb)",
+                        matchedChapter = matchedChapter,
+                        subjectTrack = subjectTrack,
+                        folderCategory = folderCategory,
+                        isVideoMetadataOnly = true,
+                        isPdfMemorizedPermanently = false,
+                        pdfPageCount = 0
+                    )
+                } else if (ext == "pdf") {
+                    // Check if this PDF is already in our Permanent Memory Bank
+                    val cached = synchronized(this@StudyLibraryManager) { memoryCache[rel] }
+                    val memory = if (cached != null && cached.lastModifiedMillis == file.lastModified()) {
+                        cached
+                    } else {
+                        val fresh = readPdfOnceAndBuildPermanentMemory(
+                            file = file,
+                            relativePath = rel,
+                            subjectTrack = subjectTrack,
+                            subCategory = folderCategory,
+                            matchedChapter = matchedChapter
+                        )
+                        synchronized(this@StudyLibraryManager) {
+                            memoryCache[rel] = fresh
+                        }
+                        newMemoriesAdded = true
+                        fresh
+                    }
+
+                    IndexedStudyFile(
+                        file = file,
+                        relativePath = rel,
+                        name = file.name,
+                        extension = ext,
+                        sizeKb = sizeKb,
+                        lastModifiedIst = fmt.format(Date(file.lastModified())),
+                        extractedSnippet = memory.extractedMemoryText,
+                        matchedChapter = memory.matchedChapter,
+                        subjectTrack = memory.subjectTrack,
+                        folderCategory = memory.subCategory,
+                        isVideoMetadataOnly = false,
+                        isPdfMemorizedPermanently = true,
+                        pdfPageCount = memory.pageCount
+                    )
+                } else {
+                    val textSnippet = runCatching { file.readText().take(3000) }.getOrDefault("File: $rel")
+                    IndexedStudyFile(
+                        file = file,
+                        relativePath = rel,
+                        name = file.name,
+                        extension = ext,
+                        sizeKb = sizeKb,
+                        lastModifiedIst = fmt.format(Date(file.lastModified())),
+                        extractedSnippet = textSnippet,
+                        matchedChapter = matchedChapter,
+                        subjectTrack = subjectTrack,
+                        folderCategory = folderCategory,
+                        isVideoMetadataOnly = false,
+                        isPdfMemorizedPermanently = true,
+                        pdfPageCount = 0
+                    )
+                }
             }
-            .sortedBy { it.name.lowercase() }
+            .sortedWith(compareBy<IndexedStudyFile> { it.subjectTrack }.thenBy { it.matchedChapter }.thenBy { it.name })
             .toList()
+
+        if (newMemoriesAdded) {
+            runCatching {
+                val raw = jsonFormat.encodeToString(memoryCache.values.toList())
+                File(root, ".jarvis_pdf_memory.json").writeText(raw)
+            }
+        }
+
+        results
     }
 }
 
@@ -334,66 +587,75 @@ fun StudyLibraryScreen(
     val rootFolder = remember(hasStoragePerm) { StudyLibraryManager.getDedicatedRootFolder(context) }
 
     val indexedFiles = remember { mutableStateListOf<IndexedStudyFile>() }
+    var selectedTrackFilter by remember { mutableStateOf("ALL") }
     var searchQuery by remember { mutableStateOf("") }
     var selectedFile by remember { mutableStateOf<IndexedStudyFile?>(null) }
-    var editorContent by remember { mutableStateOf("") }
-    var newFileName by remember { mutableStateOf("") }
-    var statusBanner by remember {
-        mutableStateOf("Dedicated Study Folder: ${rootFolder.absolutePath} (Sandboxed • Snapshot before overwrite • Undo Trash active)")
-    }
-    var confirmDeleteFile by remember { mutableStateOf<IndexedStudyFile?>(null) }
-    var showAuditModal by remember { mutableStateOf(false) }
 
-    // PDF Page Viewer State
+    var statusBanner by remember {
+        mutableStateOf("Scanning /storage/emulated/0/0.Neet 2027 (Biology_360p, Chemistry_360p, MATERIALS NEEDED_360p, Physics_360p)...")
+    }
+    var isScanning by remember { mutableStateOf(false) }
+    var isDeepMemorizing by remember { mutableStateOf(false) }
+
+    // PDF Preview Page State (for inspecting pages when desired)
     var currentPdfPage by remember { mutableIntStateOf(0) }
-    var totalPdfPages by remember { mutableIntStateOf(0) }
     var renderedPdfBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
-    // Video Timestamp State
-    var videoJumpMinutes by remember { mutableStateOf("25:30") }
-
-    // AI File Citation / Summary Output
-    var aiCitationResult by remember { mutableStateOf("") }
-    var isAiWorking by remember { mutableStateOf(false) }
-
-    fun refreshIndex() {
+    fun scanAndMemorizeAllOnce() {
+        if (isScanning) return
+        isScanning = true
         scope.launch {
+            StudyLibraryManager.ensurePermanentMemoriesLoaded(context, rootFolder)
             val list = StudyLibraryManager.indexAllStudyFiles(rootFolder, plan)
+            StudyLibraryManager.savePermanentMemoriesToDisk(context, rootFolder)
             indexedFiles.clear()
             indexedFiles.addAll(list)
+            val pdfCount = list.count { it.extension == "pdf" }
+            val videoCount = list.count { it.isVideoMetadataOnly }
+            val chaptersCount = list.map { it.matchedChapter }.distinct().size
+            statusBanner = "✓ Mapped ${list.size} items in '0.Neet 2027' across $chaptersCount folders: " +
+                "$pdfCount PDFs permanently memorized (read-once) • $videoCount videos catalogued (metadata only)."
             if (selectedFile == null && list.isNotEmpty()) {
-                val first = list.first()
-                selectedFile = first
-                editorContent = first.extractedSnippet
+                val firstPdf = list.firstOrNull { it.extension == "pdf" } ?: list.first()
+                selectedFile = firstPdf
+                if (firstPdf.extension == "pdf") {
+                    currentPdfPage = 0
+                    renderedPdfBitmap = StudyLibraryManager.renderPdfPageToBitmap(firstPdf.file, 0)
+                }
             }
+            isScanning = false
         }
     }
 
     LaunchedEffect(hasStoragePerm) {
         if (hasStoragePerm) {
-            val initial = StudyLibraryManager.indexAllStudyFiles(rootFolder, plan)
-            if (initial.isEmpty()) {
-                StudyLibraryManager.seedStarterNeetFiles(rootFolder)
+            scanAndMemorizeAllOnce()
+        }
+    }
+
+    val trackFilters = listOf("ALL", "Biology_360p", "Chemistry_360p", "Physics_360p", "MATERIALS", "PDFs ONLY", "VIDEOS MAP")
+
+    val filteredFiles = remember(indexedFiles.size, selectedTrackFilter, searchQuery) {
+        indexedFiles.filter { item ->
+            val matchesTrack = when (selectedTrackFilter) {
+                "ALL" -> true
+                "PDFs ONLY" -> item.extension == "pdf"
+                "VIDEOS MAP" -> item.isVideoMetadataOnly
+                else -> item.relativePath.contains(selectedTrackFilter, ignoreCase = true) ||
+                    item.subjectTrack.contains(selectedTrackFilter, ignoreCase = true)
             }
-            refreshIndex()
+            val matchesQuery = if (searchQuery.isBlank()) true else {
+                item.relativePath.contains(searchQuery, ignoreCase = true) ||
+                    item.name.contains(searchQuery, ignoreCase = true) ||
+                    item.matchedChapter.contains(searchQuery, ignoreCase = true) ||
+                    item.extractedSnippet.contains(searchQuery, ignoreCase = true)
+            }
+            matchesTrack && matchesQuery
         }
-    }
-
-    val filteredFiles = remember(indexedFiles.size, searchQuery) {
-        if (searchQuery.isBlank()) indexedFiles.toList()
-        else indexedFiles.filter {
-            it.name.contains(searchQuery, ignoreCase = true) ||
-                it.extractedSnippet.contains(searchQuery, ignoreCase = true) ||
-                it.matchedChapter.contains(searchQuery, ignoreCase = true)
-        }
-    }
-
-    val todayAssignments = remember {
-        NeetPlanRepository.getAssignmentsForDate(plan, NeetPlanRepository.getImphalNow().toLocalDate())
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        // 1. Folder Header, All-Files Permission Check & Quick Actions
+        // 1. Top Status & Permanent PDF Memory Engine Card
         LiquidGlassCard(lab = lab, tilt = tilt, accentTint = JarvisSpatialPalettes.StatusSuccess) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -405,7 +667,7 @@ fun StudyLibraryScreen(
                         Icon(Icons.Default.Folder, contentDescription = null, tint = JarvisSpatialPalettes.StatusSuccess)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "CHAPTER 5 // STUDY LIBRARY & SYLLABUS FILE ENGINE (FULL)",
+                            text = "EXACT FOLDER LOCKED // Internal shared storage > 0.Neet 2027",
                             color = JarvisSpatialPalettes.StatusSuccess,
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold,
@@ -420,7 +682,7 @@ fun StudyLibraryScreen(
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = "Find in Xiaomi File Manager -> Internal shared storage -> JarvisNEET2027 (Lectures, Notes, NCERT_PDFs, Jarvis_AI_Notes).",
+                        text = "Rule Active: All PDFs (DppNotes, notes, Study Plan) are read ONCE and stored in permanent memory (.jarvis_pdf_memory.json). Videos are mapped by name/chapter without reading or playing video files.",
                         color = palette.textSecondary,
                         fontSize = 11.sp
                     )
@@ -439,153 +701,78 @@ fun StudyLibraryScreen(
                 }
             }
 
+            if (isScanning || isDeepMemorizing) {
+                Spacer(modifier = Modifier.height(8.dp))
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                    color = JarvisSpatialPalettes.StatusWarning,
+                    trackColor = Color.White.copy(alpha = 0.15f)
+                )
+            }
+
             Spacer(modifier = Modifier.height(12.dp))
             Row(
                 modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 LiquidGlassButton(
-                    text = "Re-Scan Folder (${indexedFiles.size})",
+                    text = if (isScanning) "Scanning 0.Neet 2027..." else "Scan & Memorize New Files (${indexedFiles.size})",
                     icon = Icons.Default.Refresh,
                     lab = lab,
                     accentColor = JarvisSpatialPalettes.StatusSuccess,
-                    onClick = {
-                        refreshIndex()
-                        statusBanner = "Re-scanned ${indexedFiles.size} files in ${rootFolder.name}."
-                    }
+                    onClick = { scanAndMemorizeAllOnce() }
                 )
                 LiquidGlassButton(
-                    text = "Seed Starter NEET Notes",
-                    icon = Icons.Default.AutoAwesome,
+                    text = if (isDeepMemorizing) "Memorizing Slides..." else "Batch Vision-Memorize PDFs",
+                    icon = Icons.Default.Memory,
                     lab = lab,
                     accentColor = JarvisSpatialPalettes.StatusWarning,
                     onClick = {
-                        StudyLibraryManager.seedStarterNeetFiles(rootFolder)
-                        refreshIndex()
-                        statusBanner = "Starter NEET 2027 notes (Rotational Motion, Electric Charges, GOC, Biomolecules, SHM) ready!"
-                    }
-                )
-                LiquidGlassButton(
-                    text = "Find Rotational Motion",
-                    icon = Icons.Default.Search,
-                    lab = lab,
-                    accentColor = JarvisSpatialPalettes.StatusSuccess,
-                    onClick = {
-                        searchQuery = "Rotational Motion"
-                        val match = indexedFiles.firstOrNull {
-                            it.name.contains("Rotational", ignoreCase = true) ||
-                                it.extractedSnippet.contains("Rotational", ignoreCase = true)
-                        }
-                        if (match != null) {
-                            selectedFile = match
-                            editorContent = match.extractedSnippet
-                            aiCitationResult = "CITATION FOUND // File: ${match.relativePath} (Page 1–3)\n" +
-                                "• Moment of Inertia: Ring MR², Disc ½MR², Solid Sphere (2/5)MR².\n" +
-                                "• Incline acceleration: a = g sinθ / (1 + k²/R²)."
+                        if (!isDeepMemorizing) {
+                            isDeepMemorizing = true
+                            scope.launch {
+                                val pdfTargets = indexedFiles.filter { it.extension == "pdf" }.take(5)
+                                var done = 0
+                                for (pdf in pdfTargets) {
+                                    val res = StudyLibraryManager.deepMemorizePdfWithVision(
+                                        context = context,
+                                        rootFolder = rootFolder,
+                                        target = pdf,
+                                        modelId = committedModelId
+                                    )
+                                    if (res.isSuccess) done++
+                                }
+                                scanAndMemorizeAllOnce()
+                                statusBanner = "✓ Deep Vision-Memorized $done PDF(s) permanently into .jarvis_pdf_memory.json!"
+                                isDeepMemorizing = false
+                            }
                         }
                     }
-                )
-                LiquidGlassButton(
-                    text = "Restore Undo Trash",
-                    icon = Icons.Default.Refresh,
-                    lab = lab,
-                    accentColor = JarvisSpatialPalettes.StatusWarning,
-                    onClick = {
-                        val count = StudyLibraryManager.restoreAllFromTrash(rootFolder)
-                        refreshIndex()
-                        statusBanner = "Restored $count file(s) from .jarvis_trash/ back into Notes/."
-                    }
-                )
-                LiquidGlassButton(
-                    text = if (showAuditModal) "Hide Audit Log" else "Safety Audit Log",
-                    icon = Icons.Default.Info,
-                    lab = lab,
-                    accentColor = JarvisSpatialPalettes.StatusError,
-                    onClick = { showAuditModal = !showAuditModal }
                 )
             }
+        }
 
-            if (showAuditModal) {
-                Spacer(modifier = Modifier.height(10.dp))
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(Color(0xFF09090B))
-                        .border(1.dp, JarvisSpatialPalettes.StatusWarning, RoundedCornerShape(14.dp))
-                        .padding(12.dp)
-                ) {
-                    Text(
-                        text = StudyLibraryManager.readAuditLog(rootFolder),
-                        color = palette.textSecondary,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 11.sp
+        // 2. Folder Tree Filter Chips & Search Bar
+        LiquidGlassCard(lab = lab, tilt = tilt, accentTint = JarvisSpatialPalettes.StatusWarning) {
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                trackFilters.forEach { filter ->
+                    LiquidGlassButton(
+                        text = filter,
+                        lab = lab,
+                        isActive = selectedTrackFilter == filter,
+                        accentColor = if (selectedTrackFilter == filter) JarvisSpatialPalettes.StatusSuccess else JarvisSpatialPalettes.StatusWarning,
+                        onClick = { selectedTrackFilter = filter }
                     )
                 }
             }
-        }
-
-        // 2. Plan Chapter-to-File Mapper ("Today: Open This File")
-        LiquidGlassCard(lab = lab, tilt = tilt, accentTint = JarvisSpatialPalettes.StatusWarning) {
-            Text(
-                text = "TODAY'S PLAN CHAPTER-TO-FILE MAPPER (TAP TO OPEN MATCHED MATERIAL)",
-                color = JarvisSpatialPalettes.StatusWarning,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.Bold,
-                fontSize = 12.sp
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                todayAssignments.forEach { assign ->
-                    val matchedFile = indexedFiles.firstOrNull {
-                        it.matchedChapter.contains(assign.chapterTitle.take(8), ignoreCase = true) ||
-                            it.name.contains(assign.chapterTitle.take(8), ignoreCase = true)
-                    }
-                    Box(
-                        modifier = Modifier
-                            .width(240.dp)
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(Color(0xFF18181B))
-                            .border(
-                                1.dp,
-                                if (matchedFile != null) JarvisSpatialPalettes.StatusSuccess else Color(0xFF52525B),
-                                RoundedCornerShape(16.dp)
-                            )
-                            .clickable {
-                                if (matchedFile != null) {
-                                    selectedFile = matchedFile
-                                    editorContent = matchedFile.extractedSnippet
-                                } else {
-                                    searchQuery = assign.chapterTitle.substringBefore(" ")
-                                }
-                            }
-                            .padding(12.dp)
-                    ) {
-                        Column {
-                            Text(assign.trackName, color = JarvisSpatialPalettes.StatusWarning, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
-                            Text(assign.chapterTitle, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = if (matchedFile != null) "Today: Open ${matchedFile.name} →" else "Tap to search/create note",
-                                color = if (matchedFile != null) JarvisSpatialPalettes.StatusSuccess else palette.textSecondary,
-                                fontSize = 11.sp,
-                                fontFamily = FontFamily.Monospace
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // 3. Search Bar + Create New AI/Study Note Input
-        LiquidGlassCard(lab = lab, tilt = tilt) {
+            Spacer(modifier = Modifier.height(10.dp))
             LiquidGlassPillInput(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
-                placeholder = "Full-text & semantic keyword search (e.g. 'Rotational motion', 'Gauss', 'Km', 'Concanavalin')...",
+                placeholder = "Search 0.Neet 2027 (e.g. 'Biomolecules', 'Pankaj Sijariya', 'DppNotes', 'GOC', 'Hydrocarbon')...",
                 lab = lab,
                 leadingIcon = Icons.Default.Search,
                 trailingContent = {
@@ -599,338 +786,268 @@ fun StudyLibraryScreen(
                     }
                 }
             )
-            Spacer(modifier = Modifier.height(10.dp))
-            LiquidGlassPillInput(
-                value = newFileName,
-                onValueChange = { newFileName = it },
-                placeholder = "Create new note inside Jarvis_AI_Notes/ (e.g. 'Capacitance_Formulas.md')...",
-                lab = lab,
-                leadingIcon = Icons.Default.Add,
-                trailingContent = {
-                    LiquidGlassButton(
-                        text = "Create File",
-                        icon = Icons.Default.Add,
-                        lab = lab,
-                        accentColor = JarvisSpatialPalettes.StatusSuccess,
-                        onClick = {
-                            val cleanName = newFileName.trim().replace("/", "_")
-                            if (cleanName.isNotEmpty()) {
-                                val finalName = if (cleanName.contains(".")) cleanName else "$cleanName.md"
-                                val target = File(File(rootFolder, "Jarvis_AI_Notes"), finalName)
-                                val template = "# $finalName\nCreated by J.A.R.V.I.S. Study Library\n\n- **NCERT Core Line**: \n- **Formula / Exception**: \n- **Error Log ID**: \n"
-                                if (StudyLibraryManager.saveFileWithSnapshot(rootFolder, target, template)) {
-                                    newFileName = ""
-                                    refreshIndex()
-                                    statusBanner = "Created Jarvis_AI_Notes/$finalName"
-                                }
-                            }
-                        }
-                    )
-                }
-            )
         }
 
-        // 4. Two-Column Split: File Cards List (Left) + In-App Viewer & Editor (Right)
+        // 3. Two-Pane Map: Full Recursive Subfolder List (Left) + Permanent PDF Memory & Page Inspector (Right)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Left Column: Indexed File Cards
-            LiquidGlassCard(lab = lab, tilt = tilt, modifier = Modifier.weight(0.45f)) {
+            // Left Column: Mapped Files & Subfolders inside 0.Neet 2027
+            LiquidGlassCard(lab = lab, tilt = tilt, modifier = Modifier.weight(0.48f)) {
                 Text(
-                    text = "INDEXED FILES (${filteredFiles.size})",
+                    text = "MAPPED ITEMS IN 0.Neet 2027 (${filteredFiles.size})",
                     color = JarvisSpatialPalettes.StatusSuccess,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
                     fontSize = 12.sp
                 )
                 Spacer(modifier = Modifier.height(10.dp))
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    filteredFiles.forEach { item ->
-                        val isSelected = selectedFile?.file?.absolutePath == item.file.absolutePath
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(if (isSelected) Color(0xFF27272A) else Color(0xFF121216))
-                                .border(
-                                    width = if (isSelected) 1.5.dp else 1.dp,
-                                    color = if (isSelected) JarvisSpatialPalettes.StatusWarning else Color.White.copy(alpha = 0.2f),
-                                    shape = RoundedCornerShape(14.dp)
-                                )
-                                .clickable {
-                                    selectedFile = item
-                                    editorContent = item.extractedSnippet
-                                    if (item.extension == "pdf") {
-                                        currentPdfPage = 0
-                                        totalPdfPages = StudyLibraryManager.getPdfPageCount(item.file)
-                                        renderedPdfBitmap = StudyLibraryManager.renderPdfPageToBitmap(item.file, 0)
-                                    } else {
-                                        renderedPdfBitmap = null
+                if (filteredFiles.isEmpty()) {
+                    Text(
+                        text = if (!rootFolder.exists()) {
+                            "Folder '/storage/emulated/0/0.Neet 2027' not detected yet—ensure '3. Grant All Files Access' is enabled."
+                        } else {
+                            "No files match filter '$selectedTrackFilter / $searchQuery'."
+                        },
+                        color = palette.textSecondary,
+                        fontSize = 12.sp
+                    )
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        filteredFiles.take(80).forEach { item ->
+                            val isSelected = selectedFile?.relativePath == item.relativePath
+                            val badgeColor = when {
+                                item.isVideoMetadataOnly -> JarvisSpatialPalettes.StatusError
+                                item.extension == "pdf" -> JarvisSpatialPalettes.StatusSuccess
+                                else -> JarvisSpatialPalettes.StatusWarning
+                            }
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(if (isSelected) Color(0xFF27272A) else Color(0xFF121216))
+                                    .border(
+                                        width = if (isSelected) 1.5.dp else 1.dp,
+                                        color = if (isSelected) badgeColor else Color.White.copy(alpha = 0.18f),
+                                        shape = RoundedCornerShape(14.dp)
+                                    )
+                                    .clickable {
+                                        selectedFile = item
+                                        if (item.extension == "pdf") {
+                                            currentPdfPage = 0
+                                            renderedPdfBitmap = StudyLibraryManager.renderPdfPageToBitmap(item.file, 0)
+                                        } else {
+                                            renderedPdfBitmap = null
+                                        }
                                     }
-                                }
-                                .padding(12.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                                    .padding(12.dp)
                             ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = item.name,
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = if (item.isVideoMetadataOnly) "VIDEO MAP ONLY"
+                                        else if (item.extension == "pdf") "PDF MEMORIZED ✓"
+                                        else item.extension.uppercase(),
+                                        color = badgeColor,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(3.dp))
                                 Text(
-                                    text = item.name,
-                                    color = Color.White,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 13.sp
-                                )
-                                Text(
-                                    text = item.extension.uppercase(),
-                                    color = JarvisSpatialPalettes.StatusSuccess,
+                                    text = item.relativePath,
+                                    color = JarvisSpatialPalettes.StatusWarning,
                                     fontFamily = FontFamily.Monospace,
                                     fontSize = 10.sp
                                 )
+                                Text(
+                                    text = "${item.subjectTrack} • ${item.matchedChapter} • ${item.folderCategory}",
+                                    color = palette.textSecondary,
+                                    fontSize = 11.sp
+                                )
                             }
-                            Text(
-                                text = "Chapter: ${item.matchedChapter} • ${item.sizeKb} KB",
-                                color = JarvisSpatialPalettes.StatusWarning,
-                                fontSize = 11.sp
-                            )
-                            Text(
-                                text = item.extractedSnippet.replace("\n", " ").take(90),
-                                color = palette.textSecondary,
-                                fontSize = 11.sp
-                            )
                         }
                     }
                 }
             }
 
-            // Right Column: In-App Viewer (PDF Page Renderer / Text & Markdown Editor / Video Timestamp Opener)
-            LiquidGlassCard(lab = lab, tilt = tilt, modifier = Modifier.weight(0.55f)) {
+            // Right Column: Permanent Memory Inspector & PDF Page Viewer (Never plays videos)
+            LiquidGlassCard(lab = lab, tilt = tilt, modifier = Modifier.weight(0.52f)) {
                 val active = selectedFile
                 if (active == null) {
-                    Text("Select any file on the left to open the in-app viewer.", color = palette.textSecondary, fontSize = 14.sp)
+                    Text(
+                        text = "Tap any mapped PDF or video item on the left to inspect its permanent memory.",
+                        color = palette.textSecondary,
+                        fontSize = 14.sp
+                    )
                 } else {
                     Text(
-                        text = "IN-APP VIEWER // ${active.relativePath}",
+                        text = "PERMANENT MEMORY RECORD // ${active.folderCategory.uppercase()}",
                         color = JarvisSpatialPalettes.StatusWarning,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = active.name,
+                        color = Color.White,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Path: 0.Neet 2027/${active.relativePath}",
+                        color = JarvisSpatialPalettes.StatusSuccess,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
 
-                    // Confirmation Banner for Destructive Delete
-                    if (confirmDeleteFile?.file?.absolutePath == active.file.absolutePath) {
-                        Row(
+                    if (active.isVideoMetadataOnly) {
+                        Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(JarvisSpatialPalettes.StatusError.copy(alpha = 0.22f))
-                                .border(1.dp, JarvisSpatialPalettes.StatusError, RoundedCornerShape(12.dp))
-                                .padding(10.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(Color(0xFF18181B))
+                                .border(1.dp, JarvisSpatialPalettes.StatusError, RoundedCornerShape(16.dp))
+                                .padding(14.dp)
                         ) {
-                            Text("Move '${active.name}' to Undo Trash?", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                LiquidGlassButton(
-                                    text = "Confirm Trash",
-                                    lab = lab,
-                                    accentColor = JarvisSpatialPalettes.StatusError,
-                                    onClick = {
-                                        StudyLibraryManager.moveFileToTrash(rootFolder, active.file)
-                                        confirmDeleteFile = null
-                                        selectedFile = null
-                                        refreshIndex()
-                                        statusBanner = "Moved ${active.name} to .jarvis_trash/ (tap Restore Undo Trash anytime)."
-                                    }
+                            Column {
+                                Text(
+                                    text = "VIDEO CATALOGUE ENTRY (DIRECT READING & PLAYBACK DISABLED BY RULE)",
+                                    color = JarvisSpatialPalettes.StatusError,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp
                                 )
-                                LiquidGlassButton(
-                                    text = "Cancel",
-                                    lab = lab,
-                                    onClick = { confirmDeleteFile = null }
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "• Track: ${active.subjectTrack}\n" +
+                                        "• Chapter Folder: ${active.matchedChapter}\n" +
+                                        "• Lecture File: ${active.name}\n" +
+                                        "• Size: ${"%.2f MB".format(active.sizeKb / 1024.0)} (${active.lastModifiedIst})",
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    lineHeight = 20.sp
                                 )
                             }
                         }
-                        Spacer(modifier = Modifier.height(8.dp))
-                    }
-
-                    // Action Bar: Save with Snapshot, Summarize with Citations, Delete
-                    Row(
-                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        if (active.extension in listOf("md", "txt", "json", "csv")) {
+                    } else if (active.extension == "pdf") {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                             LiquidGlassButton(
-                                text = "Save (Auto-Snapshot)",
-                                icon = Icons.Default.CheckCircle,
+                                text = if (isDeepMemorizing) "Extracting Slide Memory..." else "Deep Vision Memorize PDF (Once)",
+                                icon = Icons.Default.AutoAwesome,
                                 lab = lab,
                                 accentColor = JarvisSpatialPalettes.StatusSuccess,
                                 onClick = {
-                                    if (StudyLibraryManager.saveFileWithSnapshot(rootFolder, active.file, editorContent)) {
-                                        refreshIndex()
-                                        statusBanner = "Saved ${active.name} (previous version snapshotted in .jarvis_snapshots/)."
+                                    if (!isDeepMemorizing) {
+                                        isDeepMemorizing = true
+                                        scope.launch {
+                                            val res = StudyLibraryManager.deepMemorizePdfWithVision(
+                                                context = context,
+                                                rootFolder = rootFolder,
+                                                target = active,
+                                                modelId = committedModelId
+                                            )
+                                            res.fold(
+                                                onSuccess = { mem ->
+                                                    val updatedItem = active.copy(extractedSnippet = mem.extractedMemoryText)
+                                                    selectedFile = updatedItem
+                                                    val idx = indexedFiles.indexOfFirst { it.relativePath == active.relativePath }
+                                                    if (idx >= 0) indexedFiles[idx] = updatedItem
+                                                    statusBanner = "✓ Permanently stored deep slide memory for '${active.name}'!"
+                                                },
+                                                onFailure = { err ->
+                                                    statusBanner = "Vision memory note: ${err.message}"
+                                                }
+                                            )
+                                            isDeepMemorizing = false
+                                        }
                                     }
                                 }
                             )
-                        }
-                        LiquidGlassButton(
-                            text = if (isAiWorking) "Jarvis Reading..." else "Jarvis Cite & Summarise",
-                            icon = Icons.Default.AutoAwesome,
-                            lab = lab,
-                            accentColor = JarvisSpatialPalettes.StatusWarning,
-                            onClick = {
-                                if (!isAiWorking) {
-                                    isAiWorking = true
-                                    scope.launch {
-                                        val prompt = "Summarise this NEET study file (${active.relativePath}) in 3 crisp NCERT bullet points with exact file + page/section citations:\n\n${editorContent.take(3000)}"
-                                        val reply = JarvisBrainEngine.generateJarvisReply(
-                                            context = context,
-                                            plan = plan,
-                                            masterPrompt = masterPrompt,
-                                            modelId = committedModelId,
-                                            temperature = committedTemperature,
-                                            forceOffline = forceOffline,
-                                            conversation = emptyList(),
-                                            userQuery = prompt
-                                        )
-                                        aiCitationResult = "CITATION SUMMARY // ${active.relativePath}:\n${reply.visibleText}"
-                                        isAiWorking = false
-                                    }
-                                }
-                            }
-                        )
-                        LiquidGlassButton(
-                            text = "Trash File",
-                            icon = Icons.Default.Delete,
-                            lab = lab,
-                            accentColor = JarvisSpatialPalettes.StatusError,
-                            onClick = { confirmDeleteFile = active }
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    // Format-specific viewer body
-                    when (active.extension) {
-                        "pdf" -> {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "PDF Page ${currentPdfPage + 1} of ${totalPdfPages.coerceAtLeast(1)}",
-                                    color = Color.White,
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 12.sp
-                                )
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    LiquidGlassButton(
-                                        text = "◀ Prev Page",
-                                        lab = lab,
-                                        onClick = {
-                                            if (currentPdfPage > 0) {
-                                                currentPdfPage--
-                                                renderedPdfBitmap = StudyLibraryManager.renderPdfPageToBitmap(active.file, currentPdfPage)
-                                            }
-                                        }
-                                    )
-                                    LiquidGlassButton(
-                                        text = "Next Page ▶",
-                                        lab = lab,
-                                        onClick = {
-                                            if (currentPdfPage + 1 < totalPdfPages) {
-                                                currentPdfPage++
-                                                renderedPdfBitmap = StudyLibraryManager.renderPdfPageToBitmap(active.file, currentPdfPage)
-                                            }
-                                        }
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(8.dp))
-                            val bmp = renderedPdfBitmap
-                            if (bmp != null) {
-                                Image(
-                                    bitmap = bmp.asImageBitmap(),
-                                    contentDescription = "PDF Page ${currentPdfPage + 1}",
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(320.dp)
-                                        .clip(RoundedCornerShape(14.dp))
-                                        .background(Color.White)
-                                )
-                            } else {
-                                Text("Place any NCERT or PW PDF inside JarvisNEET2027/NCERT_PDFs/ to view pages here.", color = palette.textSecondary, fontSize = 12.sp)
-                            }
-                        }
-                        "mp4", "mkv", "webm" -> {
-                            Text("Lecture Video Timestamp Launcher (${active.name})", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            Spacer(modifier = Modifier.height(6.dp))
-                            LiquidGlassPillInput(
-                                value = videoJumpMinutes,
-                                onValueChange = { videoJumpMinutes = it },
-                                placeholder = "Enter timestamp mm:ss (e.g. 25:30)",
+                            LiquidGlassButton(
+                                text = "◀ Page",
                                 lab = lab,
-                                leadingIcon = Icons.Default.PlayArrow,
-                                trailingContent = {
-                                    LiquidGlassButton(
-                                        text = "Open at Timestamp",
-                                        lab = lab,
-                                        accentColor = JarvisSpatialPalettes.StatusSuccess,
-                                        onClick = {
-                                            val intent = Intent(Intent.ACTION_VIEW).apply {
-                                                setDataAndType(Uri.fromFile(active.file), "video/*")
-                                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                            }
-                                            runCatching { context.startActivity(intent) }
-                                        }
-                                    )
+                                onClick = {
+                                    if (currentPdfPage > 0) {
+                                        currentPdfPage--
+                                        renderedPdfBitmap = StudyLibraryManager.renderPdfPageToBitmap(active.file, currentPdfPage)
+                                    }
+                                }
+                            )
+                            LiquidGlassButton(
+                                text = "Page ${currentPdfPage + 1}/${active.pdfPageCount.coerceAtLeast(1)} ▶",
+                                lab = lab,
+                                onClick = {
+                                    if (currentPdfPage + 1 < active.pdfPageCount) {
+                                        currentPdfPage++
+                                        renderedPdfBitmap = StudyLibraryManager.renderPdfPageToBitmap(active.file, currentPdfPage)
+                                    }
                                 }
                             )
                         }
-                        else -> {
-                            Box(
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        val bmp = renderedPdfBitmap
+                        if (bmp != null) {
+                            Image(
+                                bitmap = bmp.asImageBitmap(),
+                                contentDescription = "PDF Page ${currentPdfPage + 1}",
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(230.dp)
+                                    .height(240.dp)
                                     .clip(RoundedCornerShape(14.dp))
-                                    .background(Color(0xFF09090B))
-                                    .border(1.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(14.dp))
-                                    .padding(12.dp)
-                            ) {
-                                BasicTextField(
-                                    value = editorContent,
-                                    onValueChange = { editorContent = it },
-                                    textStyle = TextStyle(
-                                        color = Color(0xFFFAFAFA),
-                                        fontSize = 13.sp,
-                                        fontFamily = FontFamily.Monospace,
-                                        lineHeight = 19.sp
-                                    ),
-                                    cursorBrush = SolidColor(JarvisSpatialPalettes.StatusSuccess),
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            }
+                                    .background(Color.White)
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
                         }
-                    }
 
-                    if (aiCitationResult.isNotBlank()) {
-                        Spacer(modifier = Modifier.height(10.dp))
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(14.dp))
-                                .background(Color(0xFF18181B))
+                                .background(Color(0xFF09090B))
                                 .border(1.dp, JarvisSpatialPalettes.StatusSuccess, RoundedCornerShape(14.dp))
                                 .padding(12.dp)
                         ) {
-                            Text(
-                                text = aiCitationResult,
-                                color = Color.White,
-                                fontSize = 12.sp,
-                                lineHeight = 18.sp
-                            )
+                            Column {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = JarvisSpatialPalettes.StatusSuccess, modifier = Modifier.size(15.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "STORED PERMANENT MEMORY (NEVER NEEDS RE-READING)",
+                                        color = JarvisSpatialPalettes.StatusSuccess,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 11.sp
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = active.extractedSnippet,
+                                    color = Color(0xFFFAFAFA),
+                                    fontSize = 12.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    lineHeight = 18.sp
+                                )
+                            }
                         }
                     }
                 }
