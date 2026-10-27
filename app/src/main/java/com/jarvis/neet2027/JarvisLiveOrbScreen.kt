@@ -85,6 +85,13 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.random.Random
 
+// Subtle High-End Tri-Chroma Accents (Emerald Green, Solar Amber-Yellow, Crimson Red)
+private val AccentEmerald = Color(0xFF10B981)
+private val AccentAmber = Color(0xFFF59E0B)
+private val AccentCrimson = Color(0xFFF43F5E)
+private val ObsidianBlack = Color(0xFF09090B)
+private val CharcoalSlate = Color(0xFF18181B)
+
 private data class OrbParticle3D(
     val theta: Float,
     val phi: Float,
@@ -92,7 +99,8 @@ private data class OrbParticle3D(
     val baseRadiusFactor: Float,
     val dotSize: Float,
     val speedMultiplier: Float,
-    val shadeAlpha: Float
+    val shadeAlpha: Float,
+    val accentType: Int // 0 = Obsidian Black (76%), 1 = Emerald (8%), 2 = Solar Amber (9%), 3 = Crimson Red (7%)
 )
 
 @Composable
@@ -114,7 +122,7 @@ fun JarvisLiveParticleOrbPage(
     var lastJarvisSpoken by remember {
         mutableStateOf(
             messages.lastOrNull { it.role == "jarvis" }?.visibleText
-                ?: "At your service, sir. Tap the 3D black particle core or the microphone button to speak live."
+                ?: "At your service, sir. Tap the 3D black & tri-chroma particle core or the microphone button to speak live."
         )
     }
     var lastEmotion by remember { mutableStateOf("calm") }
@@ -290,6 +298,13 @@ fun JarvisLiveParticleOrbPage(
         if (granted) triggerVoiceListening()
     }
 
+    val stateAccentColor = when (orbMode) {
+        VoiceOrbState.IDLE -> AccentEmerald
+        VoiceOrbState.LISTENING -> AccentCrimson
+        VoiceOrbState.THINKING -> AccentAmber
+        VoiceOrbState.SPEAKING -> AccentAmber
+    }
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -300,16 +315,22 @@ fun JarvisLiveParticleOrbPage(
                 Brush.radialGradient(
                     colors = listOf(
                         Color(0xFFFFFFFF),
-                        Color(0xFFF1F5F9),
+                        Color(0xFFF8FAFC),
                         Color(0xFFE2E8F0),
                         Color(0xFFCBD5E1)
                     )
                 )
             )
             .border(
-                width = 1.5.dp,
+                width = 1.6.dp,
                 brush = Brush.linearGradient(
-                    colors = listOf(Color(0xFFFFFFFF), Color(0xFF94A3B8), Color(0xFF475569))
+                    colors = listOf(
+                        Color(0xFFFFFFFF),
+                        AccentEmerald.copy(alpha = 0.55f),
+                        AccentAmber.copy(alpha = 0.55f),
+                        AccentCrimson.copy(alpha = 0.55f),
+                        Color(0xFF475569)
+                    )
                 ),
                 shape = RoundedCornerShape(30.dp)
             )
@@ -332,6 +353,7 @@ fun JarvisLiveParticleOrbPage(
             modifier = Modifier.fillMaxSize()
         )
 
+        // Top Frosted Header with Tri-Colour Telemetry Dots (Emerald, Amber, Crimson)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -341,26 +363,28 @@ fun JarvisLiveParticleOrbPage(
         ) {
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(10.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF09090B))
-                    )
+                    Box(modifier = Modifier.size(9.dp).clip(CircleShape).background(ObsidianBlack))
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(AccentEmerald))
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(AccentAmber))
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(AccentCrimson))
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "J.A.R.V.I.S. 3D BLACK PARTICLE MATRIX // LIVE VOICE CORE",
-                        color = Color(0xFF09090B),
+                        text = "J.A.R.V.I.S. 3D BLACK PARTICLE MATRIX // TRI-CHROMA EDITION",
+                        color = ObsidianBlack,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.ExtraBold,
                         fontSize = 12.sp
                     )
                 }
+                Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "State: ${orbMode.name} • Prosody: ${lastEmotion.uppercase()} • Tap the 3D Black Orb to speak",
+                    text = "State: ${orbMode.name} • Prosody: ${lastEmotion.uppercase()} • Tap the 3D Orb to speak",
                     color = Color(0xFF334155),
                     fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium
+                    fontWeight = FontWeight.SemiBold
                 )
             }
 
@@ -368,7 +392,12 @@ fun JarvisLiveParticleOrbPage(
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(16.dp))
-                        .background(Color(0xE609090B))
+                        .background(ObsidianBlack)
+                        .border(
+                            width = 1.2.dp,
+                            color = if (orbMode == VoiceOrbState.LISTENING) AccentCrimson else AccentEmerald,
+                            shape = RoundedCornerShape(16.dp)
+                        )
                         .clickable {
                             val hasMic = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
                             if (hasMic) triggerVoiceListening()
@@ -377,7 +406,12 @@ fun JarvisLiveParticleOrbPage(
                         .padding(horizontal = 14.dp, vertical = 10.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Mic, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                        Icon(
+                            Icons.Default.Mic,
+                            contentDescription = null,
+                            tint = if (orbMode == VoiceOrbState.LISTENING) AccentCrimson else AccentEmerald,
+                            modifier = Modifier.size(16.dp)
+                        )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = if (orbMode == VoiceOrbState.LISTENING) "Listening..." else "Speak Live",
@@ -390,8 +424,8 @@ fun JarvisLiveParticleOrbPage(
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(16.dp))
-                        .background(Color(0xCCFFFFFF))
-                        .border(1.dp, Color(0xFF09090B), RoundedCornerShape(16.dp))
+                        .background(Color(0xD9FFFFFF))
+                        .border(1.2.dp, AccentAmber, RoundedCornerShape(16.dp))
                         .clickable {
                             ttsEngine?.stop()
                             orbMode = VoiceOrbState.SPEAKING
@@ -400,14 +434,15 @@ fun JarvisLiveParticleOrbPage(
                         .padding(horizontal = 12.dp, vertical = 10.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.VolumeUp, contentDescription = null, tint = Color(0xFF09090B), modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.VolumeUp, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Replay Voice", color = Color(0xFF09090B), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text("Replay Voice", color = ObsidianBlack, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
         }
 
+        // Bottom Frosted Dock with subtle Emerald, Amber & Crimson Glass Rim
         Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -418,7 +453,7 @@ fun JarvisLiveParticleOrbPage(
             if (liveTranscript.isNotBlank()) {
                 Text(
                     text = "YOU: \"$liveTranscript\"",
-                    color = Color(0xFF475569),
+                    color = ObsidianBlack,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
                     fontSize = 12.sp,
@@ -432,13 +467,23 @@ fun JarvisLiveParticleOrbPage(
                     .fillMaxWidth()
                     .shadow(10.dp, RoundedCornerShape(22.dp))
                     .clip(RoundedCornerShape(22.dp))
-                    .background(Color(0xD9FFFFFF))
-                    .border(1.2.dp, Color(0xFF18181B), RoundedCornerShape(22.dp))
+                    .background(Color(0xE6FFFFFF))
+                    .border(
+                        width = 1.3.dp,
+                        brush = Brush.linearGradient(
+                            colors = listOf(
+                                ObsidianBlack,
+                                stateAccentColor,
+                                ObsidianBlack
+                            )
+                        ),
+                        shape = RoundedCornerShape(22.dp)
+                    )
                     .padding(16.dp)
             ) {
                 Text(
                     text = lastJarvisSpoken,
-                    color = Color(0xFF09090B),
+                    color = ObsidianBlack,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
                     lineHeight = 20.sp
@@ -450,17 +495,27 @@ fun JarvisLiveParticleOrbPage(
                     .fillMaxWidth()
                     .shadow(12.dp, RoundedCornerShape(28.dp))
                     .clip(RoundedCornerShape(28.dp))
-                    .background(Color(0xF218181B))
-                    .border(1.2.dp, Color(0xFFA1A1AA), RoundedCornerShape(28.dp))
+                    .background(CharcoalSlate)
+                    .border(
+                        width = 1.3.dp,
+                        brush = Brush.linearGradient(
+                            colors = listOf(
+                                AccentEmerald.copy(alpha = 0.8f),
+                                AccentAmber.copy(alpha = 0.8f),
+                                AccentCrimson.copy(alpha = 0.8f)
+                            )
+                        ),
+                        shape = RoundedCornerShape(28.dp)
+                    )
                     .padding(horizontal = 18.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(10.dp))
                 Box(modifier = Modifier.weight(1f)) {
                     if (textDraft.isEmpty()) {
                         Text(
-                            text = "Speak live by tapping the 3D Black Orb, or type to Jarvis here...",
+                            text = "Tap the 3D Black & Tri-Chroma Orb to talk, or type to Jarvis...",
                             color = Color(0xFFA1A1AA),
                             fontSize = 13.sp
                         )
@@ -469,7 +524,7 @@ fun JarvisLiveParticleOrbPage(
                         value = textDraft,
                         onValueChange = { textDraft = it },
                         textStyle = TextStyle(color = Color.White, fontSize = 14.sp),
-                        cursorBrush = SolidColor(Color.White),
+                        cursorBrush = SolidColor(AccentEmerald),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -477,7 +532,11 @@ fun JarvisLiveParticleOrbPage(
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(18.dp))
-                        .background(Color.White)
+                        .background(
+                            Brush.linearGradient(
+                                colors = listOf(AccentEmerald, AccentAmber)
+                            )
+                        )
                         .clickable {
                             if (textDraft.isNotBlank()) {
                                 val q = textDraft
@@ -488,9 +547,9 @@ fun JarvisLiveParticleOrbPage(
                         .padding(horizontal = 14.dp, vertical = 8.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Send, contentDescription = null, tint = Color(0xFF09090B), modifier = Modifier.size(15.dp))
+                        Icon(Icons.Default.Send, contentDescription = null, tint = ObsidianBlack, modifier = Modifier.size(15.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Send", color = Color(0xFF09090B), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Text("Send", color = ObsidianBlack, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)
                     }
                 }
             }
@@ -508,10 +567,10 @@ private fun BlackJarvis3DParticleCanvas(
 ) {
     val particles = remember {
         val rng = Random(2027)
-        List(320) { idx ->
+        List(330) { idx ->
             val layer = when {
-                idx < 70 -> 0
-                idx < 210 -> 1
+                idx < 75 -> 0
+                idx < 215 -> 1
                 else -> 2
             }
             val radiusFactor = when (layer) {
@@ -519,22 +578,30 @@ private fun BlackJarvis3DParticleCanvas(
                 1 -> 0.56f + rng.nextFloat() * 0.20f
                 else -> 0.84f + rng.nextFloat() * 0.22f
             }
+            // ~76% pure Obsidian Black/Charcoal, ~24% split across Emerald Green, Solar Amber & Crimson Red
+            val roll = rng.nextInt(100)
+            val chroma = when {
+                roll < 76 -> 0 // Obsidian Black
+                roll < 84 -> 1 // Emerald Green (#10B981)
+                roll < 93 -> 2 // Solar Amber-Yellow (#F59E0B)
+                else -> 3      // Crimson Red (#F43F5E)
+            }
             OrbParticle3D(
                 theta = rng.nextFloat() * 2f * PI.toFloat(),
                 phi = (rng.nextFloat() - 0.5f) * PI.toFloat(),
                 shellLayer = layer,
                 baseRadiusFactor = radiusFactor,
-                dotSize = when (layer) {
-                    0 -> 2.4f + rng.nextFloat() * 2.5f
-                    1 -> 1.8f + rng.nextFloat() * 2.2f
-                    else -> 1.4f + rng.nextFloat() * 2.6f
+                dotSize = when (chroma) {
+                    0 -> 1.8f + rng.nextFloat() * 2.2f
+                    else -> 2.4f + rng.nextFloat() * 2.6f
                 },
                 speedMultiplier = when (layer) {
                     0 -> 1.6f
                     1 -> 1.0f
                     else -> -0.75f
                 },
-                shadeAlpha = 0.45f + rng.nextFloat() * 0.55f
+                shadeAlpha = 0.50f + rng.nextFloat() * 0.50f,
+                accentType = chroma
             )
         }
     }
@@ -583,82 +650,108 @@ private fun BlackJarvis3DParticleCanvas(
         val cy = h * 0.44f + tilt.y * 2.2f
         val baseOrbRadius = min(w, h) * 0.27f * (1f + animatedAmplitude * 0.22f)
 
-        val bgOrb1 = Offset(
-            x = w * (0.25f + 0.08f * cos(masterSpin)),
+        // Living White & Grey Background with ultra-subtle Emerald, Amber & Crimson ambient aura
+        val bgOrbEmerald = Offset(
+            x = w * (0.24f + 0.08f * cos(masterSpin)),
             y = h * (0.30f + 0.06f * sin(masterSpin))
         )
         drawCircle(
             brush = Brush.radialGradient(
-                colors = listOf(Color(0xFFE2E8F0), Color(0x00E2E8F0)),
-                center = bgOrb1,
-                radius = w * 0.40f
+                colors = listOf(AccentEmerald.copy(alpha = 0.11f), Color(0xFFE2E8F0).copy(alpha = 0.5f), Color.Transparent),
+                center = bgOrbEmerald,
+                radius = w * 0.38f
             ),
-            radius = w * 0.40f,
-            center = bgOrb1
+            radius = w * 0.38f,
+            center = bgOrbEmerald
         )
-        val bgOrb2 = Offset(
-            x = w * (0.75f + 0.08f * sin(secondarySpin)),
-            y = h * (0.60f + 0.06f * cos(secondarySpin))
+        val bgOrbAmber = Offset(
+            x = w * (0.76f + 0.08f * sin(secondarySpin)),
+            y = h * (0.36f + 0.06f * cos(secondarySpin))
         )
         drawCircle(
             brush = Brush.radialGradient(
-                colors = listOf(Color(0xFFCBD5E1).copy(alpha = 0.65f), Color.Transparent),
-                center = bgOrb2,
-                radius = w * 0.42f
+                colors = listOf(AccentAmber.copy(alpha = 0.12f), Color(0xFFCBD5E1).copy(alpha = 0.5f), Color.Transparent),
+                center = bgOrbAmber,
+                radius = w * 0.38f
             ),
-            radius = w * 0.42f,
-            center = bgOrb2
+            radius = w * 0.38f,
+            center = bgOrbAmber
+        )
+        val bgOrbCrimson = Offset(
+            x = w * (0.50f + 0.07f * cos(secondarySpin)),
+            y = h * (0.64f + 0.05f * sin(masterSpin))
+        )
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(AccentCrimson.copy(alpha = 0.09f), Color.Transparent),
+                center = bgOrbCrimson,
+                radius = w * 0.34f
+            ),
+            radius = w * 0.34f,
+            center = bgOrbCrimson
         )
 
-        val rippleCount = 4
-        for (rIdx in 1..rippleCount) {
-            val rippleRadius = baseOrbRadius * (1.08f + rIdx * 0.16f + animatedAmplitude * 0.12f * rIdx)
+        // Concentric Dashed Acoustic Ripples (Slate Grey + subtle tri-colour outer ring)
+        val rippleColors = listOf(Color(0xFF334155), AccentEmerald, AccentAmber, AccentCrimson)
+        for (rIdx in 1..4) {
+            val rippleRadius = baseOrbRadius * (1.08f + rIdx * 0.15f + animatedAmplitude * 0.12f * rIdx)
+            val rColor = rippleColors[(rIdx - 1) % rippleColors.size]
             drawCircle(
-                color = Color(0xFF475569).copy(alpha = (0.20f / rIdx).coerceIn(0.03f, 0.18f)),
+                color = rColor.copy(alpha = (0.28f / rIdx).coerceIn(0.05f, 0.24f)),
                 radius = rippleRadius,
                 center = Offset(cx, cy),
                 style = Stroke(
-                    width = 1.2.dp.toPx(),
+                    width = 1.3.dp.toPx(),
                     pathEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 10f), phase = masterSpin * 40f)
                 )
             )
         }
 
+        // 3D Shadow Halo under the Black Jarvis Sphere
         drawCircle(
             brush = Brush.radialGradient(
                 colors = listOf(
-                    Color(0xFF09090B).copy(alpha = 0.26f + animatedAmplitude * 0.18f),
-                    Color(0xFF334155).copy(alpha = 0.12f),
+                    ObsidianBlack.copy(alpha = 0.30f + animatedAmplitude * 0.16f),
+                    AccentAmber.copy(alpha = 0.12f),
                     Color.Transparent
                 ),
                 center = Offset(cx, cy),
-                radius = baseOrbRadius * 1.35f
+                radius = baseOrbRadius * 1.38f
             ),
-            radius = baseOrbRadius * 1.35f,
+            radius = baseOrbRadius * 1.38f,
             center = Offset(cx, cy)
         )
 
+        // Outer Segmented Mechanical HUD Arcs (Obsidian Black alternating with Emerald, Amber & Crimson ticks)
         val arcRectSize = Size(baseOrbRadius * 2.15f, baseOrbRadius * 2.15f)
         val arcTopLeft = Offset(cx - arcRectSize.width / 2f, cy - arcRectSize.height / 2f)
         for (i in 0 until 6) {
             val startDeg = (i * 60f) + (masterSpin * 180f / PI.toFloat()) * (if (i % 2 == 0) 0.7f else -0.5f)
+            val segColor = when (i) {
+                1 -> AccentEmerald.copy(alpha = 0.85f)
+                3 -> AccentAmber.copy(alpha = 0.90f)
+                5 -> AccentCrimson.copy(alpha = 0.85f)
+                else -> ObsidianBlack.copy(alpha = 0.82f)
+            }
             drawArc(
-                color = Color(0xFF09090B).copy(alpha = 0.75f),
+                color = segColor,
                 startAngle = startDeg,
                 sweepAngle = 32f + animatedAmplitude * 18f,
                 useCenter = false,
                 topLeft = arcTopLeft,
                 size = arcRectSize,
-                style = Stroke(width = (2.5f + (i % 2) * 1.5f).dp.toPx(), cap = StrokeCap.Round)
+                style = Stroke(width = (2.4f + (i % 2) * 1.4f).dp.toPx(), cap = StrokeCap.Round)
             )
         }
 
+        // Inner Geodesic Rings (Obsidian + Solar Amber Hologram Filaments)
         val innerArcSize = Size(baseOrbRadius * 1.48f, baseOrbRadius * 1.48f)
         val innerTopLeft = Offset(cx - innerArcSize.width / 2f, cy - innerArcSize.height / 2f)
         for (i in 0 until 4) {
             val startDeg = (i * 90f) + (secondarySpin * 180f / PI.toFloat())
+            val ringColor = if (i % 2 == 0) CharcoalSlate.copy(alpha = 0.85f) else AccentAmber.copy(alpha = 0.75f)
             drawArc(
-                color = Color(0xFF18181B).copy(alpha = 0.82f),
+                color = ringColor,
                 startAngle = startDeg,
                 sweepAngle = 54f,
                 useCenter = false,
@@ -668,6 +761,7 @@ private fun BlackJarvis3DParticleCanvas(
             )
         }
 
+        // Radial Neural Data Spokes (Obsidian with occasional Emerald/Amber/Crimson laser spokes)
         val spokeCount = 18
         for (s in 0 until spokeCount) {
             val angle = (s.toFloat() / spokeCount) * 2f * PI.toFloat() + masterSpin * 0.4f
@@ -676,14 +770,21 @@ private fun BlackJarvis3DParticleCanvas(
             val outerR = baseOrbRadius * (0.88f + wave)
             val p1 = Offset(cx + innerR * cos(angle), cy + innerR * sin(angle))
             val p2 = Offset(cx + outerR * cos(angle), cy + outerR * sin(angle))
+            val spokeColor = when {
+                s == 0 || s == 9 -> AccentAmber.copy(alpha = 0.65f)
+                s == 4 || s == 13 -> AccentEmerald.copy(alpha = 0.60f)
+                s == 7 || s == 16 -> AccentCrimson.copy(alpha = 0.60f)
+                else -> ObsidianBlack.copy(alpha = 0.35f + animatedAmplitude * 0.30f)
+            }
             drawLine(
-                color = Color(0xFF09090B).copy(alpha = 0.35f + animatedAmplitude * 0.35f),
+                color = spokeColor,
                 start = p1,
                 end = p2,
                 strokeWidth = 1.4.dp.toPx()
             )
         }
 
+        // 3D Projected Particle Cloud (Black/Charcoal + Emerald, Amber & Crimson Sparks)
         var prevProjected: Offset? = null
         val rotY = masterSpin + (tilt.x * 0.04f)
         val rotX = sin(secondarySpin) * 0.45f + (tilt.y * 0.04f)
@@ -713,11 +814,17 @@ private fun BlackJarvis3DParticleCanvas(
                 val dx = screenX - prevProjected!!.x
                 val dy = screenY - prevProjected!!.y
                 if (sqrt(dx * dx + dy * dy) < baseOrbRadius * 0.42f) {
+                    val lineCol = when (pt.accentType) {
+                        1 -> AccentEmerald
+                        2 -> AccentAmber
+                        3 -> AccentCrimson
+                        else -> CharcoalSlate
+                    }
                     drawLine(
-                        color = Color(0xFF18181B).copy(alpha = (0.22f * depthNorm).coerceIn(0.05f, 0.35f)),
+                        color = lineCol.copy(alpha = (0.26f * depthNorm).coerceIn(0.06f, 0.40f)),
                         start = prevProjected!!,
                         end = currentOffset,
-                        strokeWidth = 1.dp.toPx()
+                        strokeWidth = 1.1.dp.toPx()
                     )
                 }
             }
@@ -725,13 +832,27 @@ private fun BlackJarvis3DParticleCanvas(
                 prevProjected = currentOffset
             }
 
-            val particleColor = when (pt.shellLayer) {
-                0 -> Color(0xFF000000)
-                1 -> Color(0xFF09090B)
-                else -> Color(0xFF1E293B)
+            val particleColor = when (pt.accentType) {
+                1 -> AccentEmerald
+                2 -> AccentAmber
+                3 -> AccentCrimson
+                else -> when (pt.shellLayer) {
+                    0 -> Color(0xFF000000)
+                    1 -> ObsidianBlack
+                    else -> Color(0xFF1E293B)
+                }
             }
-            val alpha = (pt.shadeAlpha * (0.30f + depthNorm * 0.70f)).coerceIn(0.15f, 1.0f)
+            val alpha = (pt.shadeAlpha * (0.32f + depthNorm * 0.68f)).coerceIn(0.18f, 1.0f)
             val radiusPx = (pt.dotSize * perspective * (1f + animatedAmplitude * 0.35f)).dp.toPx()
+
+            // Subtle glow halo behind coloured accent particles
+            if (pt.accentType != 0 && depthNorm > 0.5f) {
+                drawCircle(
+                    color = particleColor.copy(alpha = 0.25f),
+                    radius = radiusPx * 2.1f,
+                    center = currentOffset
+                )
+            }
 
             drawCircle(
                 color = particleColor.copy(alpha = alpha),
@@ -740,26 +861,36 @@ private fun BlackJarvis3DParticleCanvas(
             )
         }
 
+        // Dense 3D Obsidian Singularity Core with Tri-Chroma (Emerald + Amber + Crimson) Precision Ring
         val coreRadius = baseOrbRadius * (0.21f + animatedAmplitude * 0.10f)
         drawCircle(
             brush = Brush.radialGradient(
                 colors = listOf(
                     Color(0xFF000000),
-                    Color(0xFF18181B),
-                    Color(0xFF3F3F46).copy(alpha = 0.65f),
+                    ObsidianBlack,
+                    AccentAmber.copy(alpha = 0.45f),
                     Color.Transparent
                 ),
                 center = Offset(cx, cy),
-                radius = coreRadius * 1.45f
+                radius = coreRadius * 1.55f
             ),
-            radius = coreRadius * 1.45f,
+            radius = coreRadius * 1.55f,
             center = Offset(cx, cy)
         )
         drawCircle(
-            color = Color.White.copy(alpha = 0.85f),
-            radius = coreRadius * 0.52f,
+            brush = Brush.sweepGradient(
+                colors = listOf(
+                    AccentEmerald,
+                    AccentAmber,
+                    AccentCrimson,
+                    Color.White,
+                    AccentEmerald
+                ),
+                center = Offset(cx, cy)
+            ),
+            radius = coreRadius * 0.64f,
             center = Offset(cx, cy),
-            style = Stroke(width = 1.8.dp.toPx())
+            style = Stroke(width = 2.2.dp.toPx())
         )
     }
 }
