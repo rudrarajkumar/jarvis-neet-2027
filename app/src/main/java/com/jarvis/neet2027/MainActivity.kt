@@ -1,5 +1,6 @@
 package com.jarvis.neet2027
 
+import android.app.ActivityManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -38,6 +39,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -63,9 +65,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CloudDone
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Key
@@ -74,8 +80,10 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.SettingsSuggest
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Tune
@@ -94,8 +102,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -122,7 +132,25 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jarvis.neet2027.model.NeetPlanRepository
 import com.jarvis.neet2027.model.NeetPlanRoot
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.addJsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.net.HttpURLConnection
+import java.net.URL
 import java.security.KeyStore
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -135,6 +163,10 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
+
+// ============================================================================
+// 1. XIAOMI SURVIVAL HELPER & RAM TELEMETRY
+// ============================================================================
 
 object XiaomiSurvivalHelper {
     fun isIgnoringBatteryOptimizations(context: Context): Boolean {
@@ -150,8 +182,13 @@ object XiaomiSurvivalHelper {
         }
     }
 
-    fun canDrawOverlays(context: Context): Boolean {
-        return Settings.canDrawOverlays(context)
+    fun canDrawOverlays(context: Context): Boolean = Settings.canDrawOverlays(context)
+
+    fun getAvailableRamMb(context: Context): Pair<Long, Long> {
+        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val info = ActivityManager.MemoryInfo()
+        am.getMemoryInfo(info)
+        return Pair(info.availMem / (1024 * 1024), info.totalMem / (1024 * 1024))
     }
 
     fun openBatteryOptimizationDialog(context: Context) {
@@ -205,6 +242,10 @@ object XiaomiSurvivalHelper {
         context.startActivity(intent)
     }
 }
+
+// ============================================================================
+// 2. PALETTES, GLASS CONTROLLER & NAVIGATION TABS
+// ============================================================================
 
 data class JarvisPalettePreset(
     val id: String,
@@ -352,10 +393,26 @@ enum class VoiceOrbState {
 
 private enum class JarvisNavTab(val label: String, val icon: ImageVector) {
     DASHBOARD("HUD Home", Icons.Default.Dashboard),
+    JARVIS_CHAT("Jarvis AI", Icons.Default.Chat),
+    BRAIN_ROUTER("AI Engine", Icons.Default.SettingsSuggest),
     GLASS_LAB("Glass Lab", Icons.Default.Tune),
     GALLERY("UI Gallery", Icons.Default.Palette),
     API_VAULT("Key Vault", Icons.Default.Key)
 }
+
+// ============================================================================
+// 3. HARDWARE KEYSTORE VAULT & CHAT HISTORY STORAGE
+// ============================================================================
+
+@Serializable
+data class ChatMessageItem(
+    val id: Long,
+    val role: String, // "user" or "jarvis"
+    val visibleText: String,
+    val emotionTag: String = "calm",
+    val engineBadge: String = "CLOUD",
+    val timestampIst: String = ""
+)
 
 object EncryptedKeyStoreVault {
     private const val ANDROID_KEYSTORE = "AndroidKeyStore"
@@ -369,6 +426,11 @@ object EncryptedKeyStoreVault {
     const val KEY_GITHUB_PAT = "github_fine_grained_pat"
     const val KEY_CLOUD_DATA_SHARING_OFF = "cloud_prompts_disabled"
     private const val KEY_XIAOMI_AUTOSTART_LOCKED = "xiaomi_autostart_locked"
+    private const val KEY_CHAT_HISTORY_JSON = "chat_history_json"
+    private const val KEY_COMMITTED_MODEL = "committed_model_id"
+    private const val KEY_COMMITTED_TEMP = "committed_temperature"
+
+    private val jsonFormat = Json { ignoreUnknownKeys = true }
 
     private fun getOrCreateHardwareKey(): SecretKey {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
@@ -422,30 +484,333 @@ object EncryptedKeyStoreVault {
         return "${secret.take(4)}••••••••${secret.takeLast(4)}"
     }
 
-    fun isOfflinePrivacyLockEnabled(context: Context): Boolean {
-        return context.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
+    fun isOfflinePrivacyLockEnabled(context: Context): Boolean =
+        context.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
             .getBoolean(KEY_CLOUD_DATA_SHARING_OFF, false)
-    }
 
     fun setOfflinePrivacyLock(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
-            .edit()
-            .putBoolean(KEY_CLOUD_DATA_SHARING_OFF, enabled)
-            .apply()
+            .edit().putBoolean(KEY_CLOUD_DATA_SHARING_OFF, enabled).apply()
     }
 
-    fun isXiaomiAutostartLocked(context: Context): Boolean {
-        return context.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
+    fun isXiaomiAutostartLocked(context: Context): Boolean =
+        context.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
             .getBoolean(KEY_XIAOMI_AUTOSTART_LOCKED, true)
-    }
 
     fun setXiaomiAutostartLocked(context: Context, locked: Boolean) {
         context.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY_XIAOMI_AUTOSTART_LOCKED, locked).apply()
+    }
+
+    fun saveChatHistory(context: Context, messages: List<ChatMessageItem>) {
+        val raw = runCatching { jsonFormat.encodeToString(messages.takeLast(60)) }.getOrDefault("[]")
+        context.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
+            .edit().putString(KEY_CHAT_HISTORY_JSON, raw).apply()
+    }
+
+    fun loadChatHistory(context: Context): List<ChatMessageItem> {
+        val raw = context.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
+            .getString(KEY_CHAT_HISTORY_JSON, null) ?: return emptyList()
+        return runCatching { jsonFormat.decodeFromString<List<ChatMessageItem>>(raw) }.getOrDefault(emptyList())
+    }
+
+    fun getCommittedModel(context: Context): String =
+        context.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
+            .getString(KEY_COMMITTED_MODEL, "") ?: ""
+
+    fun getCommittedTemp(context: Context): Float =
+        context.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
+            .getFloat(KEY_COMMITTED_TEMP, 0.4f)
+
+    fun saveCommittedEngine(context: Context, modelId: String, temp: Float) {
+        context.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
             .edit()
-            .putBoolean(KEY_XIAOMI_AUTOSTART_LOCKED, locked)
+            .putString(KEY_COMMITTED_MODEL, modelId)
+            .putFloat(KEY_COMMITTED_TEMP, temp)
             .apply()
     }
 }
+
+// ============================================================================
+// 4. DYNAMIC CLOUD MODEL SCANNER, HYBRID ROUTER & OFFLINE NEET BRAIN
+// ============================================================================
+
+data class DiscoveredModelInfo(
+    val id: String, // e.g., "gemini-2.5-flash"
+    val displayName: String,
+    val description: String,
+    val isRecommendedFree: Boolean
+)
+
+object JarvisBrainEngine {
+    private val jsonParser = Json { ignoreUnknownKeys = true }
+    private val emotionRegex = Regex("""^\s*\[(calm|amused|concerned|proud|urgent|focused|encouraging)\]\s*""", RegexOption.IGNORE_CASE)
+
+    fun parseEmotionAndCleanText(rawText: String): Pair<String, String> {
+        var detectedEmotion = "calm"
+        val firstMatch = emotionRegex.find(rawText)
+        if (firstMatch != null) {
+            detectedEmotion = firstMatch.groupValues[1].lowercase()
+        }
+        val cleaned = rawText
+            .replace(Regex("""\[(calm|amused|concerned|proud|urgent|focused|encouraging)\]\s*""", RegexOption.IGNORE_CASE), "")
+            .trim()
+        return Pair(detectedEmotion, if (cleaned.isEmpty()) rawText.trim() else cleaned)
+    }
+
+    fun formatScientificNotation(text: String): String {
+        return text
+            .replace("\\rightarrow", " → ")
+            .replace("->", " → ")
+            .replace("<=>", " ⇌ ")
+            .replace("\\rightleftharpoons", " ⇌ ")
+            .replace("\\Delta", "Δ")
+            .replace("\\alpha", "α")
+            .replace("\\beta", "β")
+            .replace("\\gamma", "γ")
+            .replace("\\lambda", "λ")
+            .replace("\\omega", "ω")
+            .replace("\\mu", "μ")
+            .replace("\\pi", "π")
+            .replace("H+", "H⁺")
+            .replace("OH-", "OH⁻")
+            .replace("e-", "e⁻")
+            .replace("^2", "²")
+            .replace("^3", "³")
+            .replace("_2", "₂")
+            .replace("_3", "₃")
+            .replace("_4", "₄")
+            .replace("$", "")
+    }
+
+    suspend fun scanAvailableGeminiModels(apiKey: String): Result<List<DiscoveredModelInfo>> = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank()) {
+            return@withContext Result.failure(IllegalArgumentException("No Gemini API key configured in Key Vault."))
+        }
+        runCatching {
+            val url = URL("https://generativelanguage.googleapis.com/v1beta/models?key=$apiKey")
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 10000
+                readTimeout = 10000
+            }
+            val code = conn.responseCode
+            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+            val body = BufferedReader(InputStreamReader(stream)).use { it.readText() }
+            if (code !in 200..299) {
+                throw IllegalStateException("HTTP $code from Google AI Studio: ${body.take(180)}")
+            }
+            val root = jsonParser.parseToJsonElement(body).jsonObject
+            val modelsArray = root["models"]?.jsonArray ?: emptyList()
+
+            val discovered = modelsArray.mapNotNull { elem ->
+                val obj = elem.jsonObject
+                val rawName = obj["name"]?.jsonPrimitive?.content ?: return@mapNotNull null
+                val shortId = rawName.removePrefix("models/")
+                val methods = obj["supportedGenerationMethods"]?.jsonArray?.map { it.jsonPrimitive.content }.orEmpty()
+                if (!methods.contains("generateContent")) return@mapNotNull null
+                if (!shortId.startsWith("gemini", ignoreCase = true)) return@mapNotNull null
+                val display = obj["displayName"]?.jsonPrimitive?.content ?: shortId
+                val desc = obj["description"]?.jsonPrimitive?.content ?: "Supports generateContent"
+                val isFlashFree = shortId.contains("flash", ignoreCase = true) && !shortId.contains("exp-image", ignoreCase = true)
+                DiscoveredModelInfo(
+                    id = shortId,
+                    displayName = display,
+                    description = desc,
+                    isRecommendedFree = isFlashFree
+                )
+            }.sortedWith(
+                compareByDescending<DiscoveredModelInfo> { it.isRecommendedFree }
+                    .thenByDescending { it.id.contains("2.5") || it.id.contains("3") }
+                    .thenByDescending { it.id.contains("flash") }
+            )
+
+            if (discovered.isEmpty()) {
+                throw IllegalStateException("No generateContent Gemini models returned for this key.")
+            }
+            discovered
+        }
+    }
+
+    suspend fun generateJarvisReply(
+        context: Context,
+        plan: NeetPlanRoot,
+        masterPrompt: String,
+        modelId: String,
+        temperature: Float,
+        forceOffline: Boolean,
+        conversation: List<ChatMessageItem>,
+        userQuery: String
+    ): ChatMessageItem = withContext(Dispatchers.IO) {
+        val nowIst = NeetPlanRepository.getImphalNow()
+        val timeStamp = nowIst.format(DateTimeFormatter.ofPattern("hh:mm a 'IST'"))
+        val activeSlot = NeetPlanRepository.getCurrentTimetableSlot(plan, nowIst.toLocalTime())
+        val todayLectures = NeetPlanRepository.getAssignmentsForDate(plan, nowIst.toLocalDate())
+        val lecturesSummary = if (todayLectures.isEmpty()) {
+            "Sunday Recovery / Test Guide Day"
+        } else {
+            todayLectures.joinToString(" | ") { "${it.trackId}: ${it.chapterTitle} (L${it.lectureNumberInChapter}/${it.totalLecturesInChapter})" }
+        }
+
+        val apiKey = EncryptedKeyStoreVault.readSecret(context, EncryptedKeyStoreVault.KEY_GEMINI_API)
+        val privacyLock = EncryptedKeyStoreVault.isOfflinePrivacyLockEnabled(context)
+
+        if (forceOffline || privacyLock || apiKey.isBlank()) {
+            val offlineText = buildOfflinePlanReply(plan, activeSlot.title, activeSlot.instruction, lecturesSummary, userQuery)
+            val (emotion, cleaned) = parseEmotionAndCleanText(offlineText)
+            return@withContext ChatMessageItem(
+                id = System.currentTimeMillis(),
+                role = "jarvis",
+                visibleText = formatScientificNotation(cleaned),
+                emotionTag = emotion,
+                engineBadge = "OFFLINE BRAIN (0 BYTES SENT)",
+                timestampIst = timeStamp
+            )
+        }
+
+        // Dynamic Model Resolution: never hard-code; if empty, scan once automatically
+        val resolvedModel = if (modelId.isNotBlank()) {
+            modelId
+        } else {
+            scanAvailableGeminiModels(apiKey).getOrNull()?.firstOrNull()?.id ?: ""
+        }
+
+        if (resolvedModel.isBlank()) {
+            val fallback = buildOfflinePlanReply(plan, activeSlot.title, activeSlot.instruction, lecturesSummary, userQuery)
+            val (emotion, cleaned) = parseEmotionAndCleanText(fallback)
+            return@withContext ChatMessageItem(
+                id = System.currentTimeMillis(),
+                role = "jarvis",
+                visibleText = formatScientificNotation(cleaned),
+                emotionTag = emotion,
+                engineBadge = "OFFLINE FALLBACK (SCAN NEEDED)",
+                timestampIst = timeStamp
+            )
+        }
+
+        val liveContextHeader = """
+            $masterPrompt
+            
+            LIVE IMPHAL EAST TELEMETRY:
+            - Local Time: $timeStamp (${nowIst.toLocalDate()})
+            - Active Timetable Slot: ${activeSlot.title} (${activeSlot.startTime}-${activeSlot.endTime}) -> ${activeSlot.instruction}
+            - Today's 4-Track Queue: $lecturesSummary
+        """.trimIndent()
+
+        val cloudCall = runCatching {
+            val endpoint = URL("https://generativelanguage.googleapis.com/v1beta/models/$resolvedModel:generateContent?key=$apiKey")
+            val payload = buildJsonObject {
+                putJsonObject("systemInstruction") {
+                    putJsonArray("parts") {
+                        addJsonObject { put("text", liveContextHeader) }
+                    }
+                }
+                putJsonArray("contents") {
+                    conversation.takeLast(8).forEach { msg ->
+                        addJsonObject {
+                            put("role", if (msg.role == "user") "user" else "model")
+                            putJsonArray("parts") {
+                                addJsonObject { put("text", msg.visibleText) }
+                            }
+                        }
+                    }
+                    addJsonObject {
+                        put("role", "user")
+                        putJsonArray("parts") {
+                            addJsonObject { put("text", userQuery) }
+                        }
+                    }
+                }
+                putJsonObject("generationConfig") {
+                    put("temperature", temperature.toDouble())
+                    put("maxOutputTokens", 512)
+                }
+            }
+
+            val conn = (endpoint.openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                doOutput = true
+                connectTimeout = 15000
+                readTimeout = 20000
+            }
+            conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+
+            val code = conn.responseCode
+            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+            val responseBody = BufferedReader(InputStreamReader(stream)).use { it.readText() }
+            if (code !in 200..299) {
+                throw IllegalStateException("HTTP $code: ${responseBody.take(160)}")
+            }
+            val json = jsonParser.parseToJsonElement(responseBody).jsonObject
+            val candidates = json["candidates"]?.jsonArray
+            val firstText = candidates?.firstOrNull()?.jsonObject
+                ?.get("content")?.jsonObject
+                ?.get("parts")?.jsonArray
+                ?.firstOrNull()?.jsonObject
+                ?.get("text")?.jsonPrimitive?.content
+                ?: throw IllegalStateException("Empty response from $resolvedModel")
+            firstText
+        }
+
+        return@withContext cloudCall.fold(
+            onSuccess = { rawReply ->
+                val (emotion, cleaned) = parseEmotionAndCleanText(rawReply)
+                ChatMessageItem(
+                    id = System.currentTimeMillis(),
+                    role = "jarvis",
+                    visibleText = formatScientificNotation(cleaned),
+                    emotionTag = emotion,
+                    engineBadge = "CLOUD // $resolvedModel",
+                    timestampIst = timeStamp
+                )
+            },
+            onFailure = { err ->
+                // Automatic Hybrid Router fallback to Offline Brain on network drop or HTTP 429 rate-limit
+                val offlineReply = buildOfflinePlanReply(plan, activeSlot.title, activeSlot.instruction, lecturesSummary, userQuery)
+                val (emotion, cleaned) = parseEmotionAndCleanText(offlineReply)
+                ChatMessageItem(
+                    id = System.currentTimeMillis(),
+                    role = "jarvis",
+                    visibleText = formatScientificNotation("$cleaned\n\n(Auto-routed to Offline Brain: ${err.message?.take(80)})"),
+                    emotionTag = emotion,
+                    engineBadge = "AUTO-OFFLINE FALLBACK",
+                    timestampIst = timeStamp
+                )
+            }
+        )
+    }
+
+    private fun buildOfflinePlanReply(
+        plan: NeetPlanRoot,
+        slotTitle: String,
+        slotInstruction: String,
+        lecturesSummary: String,
+        query: String
+    ): String {
+        val q = query.lowercase()
+        return when {
+            q.contains("what now") || q.contains("slot") || q.contains("timetable") || q.contains("schedule") ->
+                "[focused] Right then, sir, your Imphal IST timetable places us in **$slotTitle**. $slotInstruction Today's four tracks are: $lecturesSummary."
+            q.contains("electric") || q.contains("charge") || q.contains("coulomb") || q.contains("gauss") ->
+                "[focused] In NCERT Class 12 Physics Chapter 1 (Electric Charges & Fields), Coulomb's law states F = (1 / 4πε₀) · (|q₁q₂| / r²), and Gauss's flux law is Φ = ∮ E · dA = q_enclosed / ε₀. Remember sir, for a dipole on the axial line E_axial = 2kp/r³, exactly double the equatorial magnitude E_eq = kp/r³."
+            q.contains("goc") || q.contains("inductive") || q.contains("hyperconjugation") || q.contains("resonance") ->
+                "[calm] Ah, General Organic Chemistry, sir—priority order for electronic effects in NCERT is **Aromaticity > Resonance (+M/-M) > Hyperconjugation (α-H count) > Inductive (+I/-I)**. When checking carbocation or alkene stability, always count α-hydrogens before inductive groups."
+            q.contains("biomolecule") || q.contains("enzyme") || q.contains("amino") ->
+                "[encouraging] For Zoology Biomolecules (NCERT Class 11 Chapter 9), keep the Michaelis constant K_m crisp in mind, sir: a lower K_m means higher enzyme-substrate affinity, and competitive inhibitors (like malonate on succinic dehydrogenase) raise apparent K_m without changing V_max."
+            q.contains("oscillation") || q.contains("shm") || q.contains("pendulum") ->
+                "[focused] In Track 4 Oscillations (NCERT Class 11 Chapter 14), displacement x(t) = A sin(ωt + φ), velocity v = ω√(A² - x²), and total mechanical energy E = ½mω²A² stays constant while kinetic and potential energies oscillate at twice the frequency (2f), sir."
+            q.contains("tired") || q.contains("sleep") || q.contains("stressed") || q.contains("backlog") ->
+                "[concerned] Easy now, sir—our core rule forbids borrowing from your 02:00–10:00 sleep guardrail to repay a missed lecture. Let us execute the Bad-Day Minimum (one main lecture, 20 minutes closed-book recall, and a written 10-minute start for tomorrow) and take a 15-minute water break."
+            else ->
+                "[calm] Very good, sir. I am currently running on your local NEET 2027 Plan Engine (0 bytes leaving your Xiaomi Pad 6). We are in **$slotTitle** ($slotInstruction), targeting ${plan.meta.goalInstitution} (Open AIR ≤ ${plan.meta.aiimsNagpurCutoffs2026Round1.ASPIRATIONAL_OPEN_BUFFER}). Add your free Gemini API key in the **Key Vault** tab and tap **Scan & Apply** in **AI Engine** whenever you wish to unlock live cloud derivations."
+        }
+    }
+}
+
+// ============================================================================
+// 5. MAIN ACTIVITY & ROOT SPATIAL SHELL
+// ============================================================================
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -453,27 +818,54 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
-                JarvisChapterTwoApp()
+                JarvisChapterThreeApp()
             }
         }
     }
 }
 
 @Composable
-fun JarvisChapterTwoApp() {
+fun JarvisChapterThreeApp() {
     val context = LocalContext.current
     val plan = remember { NeetPlanRepository.loadPlan(context) }
     val masterPrompt = remember { NeetPlanRepository.loadMasterPrompt(context) }
     val lab = remember { GlassLabController() }
     val palette = lab.currentPalette
 
-    var selectedTab by remember { mutableStateOf(JarvisNavTab.DASHBOARD) }
+    var selectedTab by remember { mutableStateOf(JarvisNavTab.JARVIS_CHAT) }
     var orbState by remember { mutableStateOf(VoiceOrbState.IDLE) }
     var showBootOverlay by remember { mutableStateOf(true) }
     var tick by remember { mutableIntStateOf(0) }
 
+    // Committed vs Staged Engine State (for the APPLY & Self-Test button)
+    var committedModelId by remember { mutableStateOf(EncryptedKeyStoreVault.getCommittedModel(context)) }
+    var committedTemperature by remember { mutableFloatStateOf(EncryptedKeyStoreVault.getCommittedTemp(context)) }
+    var forceOfflineRouter by remember { mutableStateOf(false) }
+    val discoveredModels = remember { mutableStateListOf<DiscoveredModelInfo>() }
+
+    // Persistent Chat History
+    val chatMessages = remember {
+        val loaded = EncryptedKeyStoreVault.loadChatHistory(context)
+        mutableStateListOf<ChatMessageItem>().apply {
+            if (loaded.isEmpty()) {
+                add(
+                    ChatMessageItem(
+                        id = 1L,
+                        role = "jarvis",
+                        visibleText = "Good day, sir. Your NEET UG 2027 study brain is online for Imphal East (Asia/Kolkata). Ask me what to study right now, test a Physics/Chemistry/Biology concept, or tap 'AI Engine' on the left rail to scan your free Gemini models.",
+                        emotionTag = "calm",
+                        engineBadge = "SYSTEM READY",
+                        timestampIst = "ONLINE"
+                    )
+                )
+            } else {
+                addAll(loaded)
+            }
+        }
+    }
+
     LaunchedEffect(Unit) {
-        delay(1200L)
+        delay(1000L)
         showBootOverlay = false
     }
 
@@ -520,6 +912,8 @@ fun JarvisChapterTwoApp() {
                 TopSpatialHeader(
                     plan = plan,
                     lab = lab,
+                    committedModelId = committedModelId,
+                    forceOffline = forceOfflineRouter || EncryptedKeyStoreVault.isOfflinePrivacyLockEnabled(context),
                     tick = tick,
                     tilt = tilt
                 )
@@ -530,6 +924,32 @@ fun JarvisChapterTwoApp() {
                         masterPrompt = masterPrompt,
                         lab = lab,
                         tick = tick,
+                        tilt = tilt
+                    )
+                    JarvisNavTab.JARVIS_CHAT -> JarvisGlassChatScreen(
+                        plan = plan,
+                        masterPrompt = masterPrompt,
+                        lab = lab,
+                        messages = chatMessages,
+                        committedModelId = committedModelId,
+                        committedTemperature = committedTemperature,
+                        forceOffline = forceOfflineRouter,
+                        onToggleOffline = { forceOfflineRouter = !forceOfflineRouter },
+                        onOrbStateChange = { orbState = it },
+                        tilt = tilt
+                    )
+                    JarvisNavTab.BRAIN_ROUTER -> BrainRouterAndScannerScreen(
+                        lab = lab,
+                        discoveredModels = discoveredModels,
+                        committedModelId = committedModelId,
+                        committedTemperature = committedTemperature,
+                        forceOffline = forceOfflineRouter,
+                        onToggleOffline = { forceOfflineRouter = !forceOfflineRouter },
+                        onCommitSuccess = { newModel, newTemp ->
+                            committedModelId = newModel
+                            committedTemperature = newTemp
+                            EncryptedKeyStoreVault.saveCommittedEngine(context, newModel, newTemp)
+                        },
                         tilt = tilt
                     )
                     JarvisNavTab.GLASS_LAB -> GlassLabScreen(lab = lab, tilt = tilt)
@@ -568,7 +988,7 @@ fun JarvisChapterTwoApp() {
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "J.A.R.V.I.S. SPATIAL OS // APPLE PRO LIQUID GLASS",
+                        text = "J.A.R.V.I.S. SPATIAL OS // CHAPTER 3 BRAIN ONLINE",
                         color = palette.accentPrimary,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
@@ -576,7 +996,7 @@ fun JarvisChapterTwoApp() {
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Calibrating Xiaomi Pad 6 144Hz Display & Imphal East Telemetry... (Tap to skip)",
+                        text = "Loading NEET UG 2027 Master Prompt & Hybrid Cloud/Offline Router... (Tap to skip)",
                         color = palette.textSecondary,
                         fontSize = 13.sp
                     )
@@ -585,6 +1005,557 @@ fun JarvisChapterTwoApp() {
         }
     }
 }
+
+// ============================================================================
+// 6. CHAPTER 3: GEMINI-STYLE MULTI-COLOUR GLASS CHAT SCREEN
+// ============================================================================
+
+@Composable
+private fun JarvisGlassChatScreen(
+    plan: NeetPlanRoot,
+    masterPrompt: String,
+    lab: GlassLabController,
+    messages: MutableList<ChatMessageItem>,
+    committedModelId: String,
+    committedTemperature: Float,
+    forceOffline: Boolean,
+    onToggleOffline: () -> Unit,
+    onOrbStateChange: (VoiceOrbState) -> Unit,
+    tilt: Offset
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val palette = lab.currentPalette
+
+    var userDraft by remember { mutableStateOf("") }
+    var searchFilter by remember { mutableStateOf("") }
+    var isStreaming by remember { mutableStateOf(false) }
+    val privacyOff = EncryptedKeyStoreVault.isOfflinePrivacyLockEnabled(context) || forceOffline
+
+    val suggestionChips = listOf(
+        "What should I do right now, Jarvis?",
+        "Explain Coulomb's Law & Dipole Field (NCERT)",
+        "GOC: Priority order of electronic effects",
+        "Biomolecules: Explain Km & competitive inhibition",
+        "Oscillations: Total energy in SHM formula",
+        "I feel tired / behind schedule—re-plan gently"
+    )
+
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        // Live Privacy & Hybrid Router Status Bar
+        LiquidGlassCard(lab = lab, tilt = tilt, contentPadding = 14.dp) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = if (privacyOff) Icons.Default.CloudOff else Icons.Default.CloudDone,
+                        contentDescription = null,
+                        tint = if (privacyOff) JarvisSpatialPalettes.StatusSuccess else palette.accentPrimary
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = if (privacyOff) {
+                                "OFFLINE MODE ACTIVE // 0 BYTES LEAVE TABLET"
+                            } else {
+                                "HYBRID CLOUD BRAIN // ${committedModelId.ifBlank { "Auto-Scan on first message" }}"
+                            },
+                            color = palette.textPrimary,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
+                        )
+                        Text(
+                            text = if (privacyOff) {
+                                "Using local NEET 2027 Plan + NCERT vault only."
+                            } else {
+                                "Data leaving tablet: text prompt only (no personal identity, no audio, no files)."
+                            },
+                            color = palette.textSecondary,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LiquidGlassButton(
+                        text = if (privacyOff) "Offline Locked" else "Cloud Active",
+                        icon = if (privacyOff) Icons.Default.CloudOff else Icons.Default.CloudDone,
+                        lab = lab,
+                        isActive = !privacyOff,
+                        accentColor = if (privacyOff) JarvisSpatialPalettes.StatusWarning else JarvisSpatialPalettes.StatusInfo,
+                        onClick = onToggleOffline
+                    )
+                    LiquidGlassButton(
+                        text = "Regenerate",
+                        icon = Icons.Default.Refresh,
+                        lab = lab,
+                        onClick = {
+                            val lastUser = messages.lastOrNull { it.role == "user" }?.visibleText
+                            if (lastUser != null && !isStreaming) {
+                                if (messages.lastOrNull()?.role == "jarvis" && messages.size > 1) {
+                                    messages.removeAt(messages.lastIndex)
+                                }
+                                isStreaming = true
+                                onOrbStateChange(VoiceOrbState.THINKING)
+                                scope.launch {
+                                    val reply = JarvisBrainEngine.generateJarvisReply(
+                                        context = context,
+                                        plan = plan,
+                                        masterPrompt = masterPrompt,
+                                        modelId = committedModelId,
+                                        temperature = committedTemperature,
+                                        forceOffline = forceOffline,
+                                        conversation = messages.toList(),
+                                        userQuery = lastUser
+                                    )
+                                    messages.add(reply)
+                                    EncryptedKeyStoreVault.saveChatHistory(context, messages)
+                                    isStreaming = false
+                                    onOrbStateChange(VoiceOrbState.IDLE)
+                                }
+                            }
+                        }
+                    )
+                }
+            }
+        }
+
+        // Search History Bar & Suggestion Chips
+        LiquidGlassCard(lab = lab, tilt = tilt, contentPadding = 14.dp) {
+            LiquidGlassPillInput(
+                value = searchFilter,
+                onValueChange = { searchFilter = it },
+                placeholder = "Search chat history (e.g., Coulomb, GOC, Biomolecules, timetable)...",
+                lab = lab,
+                leadingIcon = Icons.Default.Search,
+                trailingContent = {
+                    if (searchFilter.isNotEmpty()) {
+                        LiquidGlassButton(
+                            text = "Clear",
+                            lab = lab,
+                            onClick = { searchFilter = "" }
+                        )
+                    }
+                }
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                suggestionChips.forEach { chip ->
+                    LiquidGlassButton(
+                        text = chip,
+                        icon = Icons.Default.AutoAwesome,
+                        lab = lab,
+                        accentColor = palette.accentSecondary,
+                        onClick = { userDraft = chip }
+                    )
+                }
+            }
+        }
+
+        // Glass Chat Message Stream
+        val visibleMessages = remember(messages.size, searchFilter) {
+            if (searchFilter.isBlank()) messages.toList()
+            else messages.filter { it.visibleText.contains(searchFilter, ignoreCase = true) }
+        }
+
+        LiquidGlassCard(lab = lab, tilt = tilt) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "J.A.R.V.I.S. CONVERSATION STREAM (${visibleMessages.size} MESSAGES)",
+                    color = palette.accentPrimary,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp
+                )
+                LiquidGlassButton(
+                    text = "Edit Last Prompt",
+                    icon = Icons.Default.Edit,
+                    lab = lab,
+                    onClick = {
+                        val lastUser = messages.lastOrNull { it.role == "user" }
+                        if (lastUser != null) {
+                            userDraft = lastUser.visibleText
+                        }
+                    }
+                )
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                visibleMessages.forEach { msg ->
+                    val isUser = msg.role == "user"
+                    val bubbleAccent = if (isUser) palette.accentSecondary else palette.accentPrimary
+                    Box(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = if (isUser) Alignment.CenterEnd else Alignment.CenterStart
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth(0.88f)
+                                .clip(RoundedCornerShape(22.dp))
+                                .background(
+                                    Brush.linearGradient(
+                                        colors = if (isUser) {
+                                            listOf(
+                                                palette.accentSecondary.copy(alpha = 0.34f),
+                                                palette.accentTertiary.copy(alpha = 0.22f)
+                                            )
+                                        } else {
+                                            listOf(
+                                                palette.accentPrimary.copy(alpha = 0.24f),
+                                                palette.glassSurface.copy(alpha = 0.85f)
+                                            )
+                                        }
+                                    )
+                                )
+                                .border(
+                                    width = 1.2.dp,
+                                    brush = Brush.linearGradient(
+                                        colors = listOf(
+                                            Color.White.copy(alpha = 0.55f),
+                                            bubbleAccent.copy(alpha = 0.75f)
+                                        )
+                                    ),
+                                    shape = RoundedCornerShape(22.dp)
+                                )
+                                .padding(16.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = if (isUser) "SIR // IMPHAL EAST" else "J.A.R.V.I.S. // ${msg.engineBadge}",
+                                    color = bubbleAccent,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp
+                                )
+                                if (!isUser) {
+                                    Text(
+                                        text = "PROSODY: ${msg.emotionTag.uppercase()} • ${msg.timestampIst}",
+                                        color = palette.textSecondary,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = msg.visibleText,
+                                color = palette.textPrimary,
+                                fontSize = 15.sp,
+                                lineHeight = 22.sp
+                            )
+                        }
+                    }
+                }
+
+                if (isStreaming) {
+                    Text(
+                        text = "J.A.R.V.I.S. isconsulting your NEET 2027 timetable & NCERT brain...",
+                        color = palette.accentPrimary,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp
+                    )
+                }
+            }
+        }
+
+        // Floating Glass Pill Chat Input
+        LiquidGlassPillInput(
+            value = userDraft,
+            onValueChange = { userDraft = it },
+            placeholder = "Message J.A.R.V.I.S., sir (e.g. 'What now?' or 'Derive electric dipole field')...",
+            lab = lab,
+            leadingIcon = Icons.Default.Mic,
+            trailingContent = {
+                LiquidGlassButton(
+                    text = if (isStreaming) "Thinking..." else "Ask Jarvis",
+                    icon = Icons.Default.Send,
+                    lab = lab,
+                    accentColor = palette.accentPrimary,
+                    onClick = {
+                        val cleanPrompt = userDraft.trim()
+                        if (cleanPrompt.isNotEmpty() && !isStreaming) {
+                            userDraft = ""
+                            val nowStamp = NeetPlanRepository.getImphalNow()
+                                .format(DateTimeFormatter.ofPattern("hh:mm a 'IST'"))
+                            messages.add(
+                                ChatMessageItem(
+                                    id = System.currentTimeMillis(),
+                                    role = "user",
+                                    visibleText = cleanPrompt,
+                                    emotionTag = "focused",
+                                    engineBadge = "TABLET",
+                                    timestampIst = nowStamp
+                                )
+                            )
+                            isStreaming = true
+                            onOrbStateChange(VoiceOrbState.THINKING)
+                            scope.launch {
+                                val reply = JarvisBrainEngine.generateJarvisReply(
+                                    context = context,
+                                    plan = plan,
+                                    masterPrompt = masterPrompt,
+                                    modelId = committedModelId,
+                                    temperature = committedTemperature,
+                                    forceOffline = forceOffline,
+                                    conversation = messages.toList(),
+                                    userQuery = cleanPrompt
+                                )
+                                messages.add(reply)
+                                EncryptedKeyStoreVault.saveChatHistory(context, messages)
+                                isStreaming = false
+                                onOrbStateChange(VoiceOrbState.SPEAKING)
+                                delay(1200L)
+                                onOrbStateChange(VoiceOrbState.IDLE)
+                            }
+                        }
+                    }
+                )
+            }
+        )
+    }
+}
+
+// ============================================================================
+// 7. CHAPTER 3: DYNAMIC MODEL SCANNER & ENGINE 'APPLY' BUTTON WITH ROLLBACK
+// ============================================================================
+
+@Composable
+private fun BrainRouterAndScannerScreen(
+    lab: GlassLabController,
+    discoveredModels: MutableList<DiscoveredModelInfo>,
+    committedModelId: String,
+    committedTemperature: Float,
+    forceOffline: Boolean,
+    onToggleOffline: () -> Unit,
+    onCommitSuccess: (String, Float) -> Unit,
+    tilt: Offset
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val palette = lab.currentPalette
+
+    var stagedModelId by remember(committedModelId) { mutableStateOf(committedModelId) }
+    var stagedTemp by remember(committedTemperature) { mutableFloatStateOf(committedTemperature) }
+    var scannerStatus by remember {
+        mutableStateOf("Tap 'Scan My Gemini Key' to dynamically query Google AI Studio's live v1beta endpoint.")
+    }
+    var applyStatus by remember {
+        mutableStateOf("Committed Model: ${committedModelId.ifBlank { "Auto-Flash" }} | Temp: ${"%.2f".format(committedTemperature)}")
+    }
+    var isScanning by remember { mutableStateOf(false) }
+    var isTestingApply by remember { mutableStateOf(false) }
+
+    val (availRamMb, totalRamMb) = remember { XiaomiSurvivalHelper.getAvailableRamMb(context) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        // RAM & Hybrid Router Card
+        LiquidGlassCard(lab = lab, tilt = tilt) {
+            Text(
+                text = "DYNAMIC MODEL SCANNER & XIAOMI PAD 6 RAM TELEMETRY",
+                color = palette.accentPrimary,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "Free RAM: $availRamMb MB / $totalRamMb MB (${if (availRamMb > 2200) "Ready for Offline Gemma 3 1B in Ch.9" else "Close background apps before loading Gemma"})",
+                color = palette.textPrimary,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 15.sp
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = scannerStatus,
+                color = palette.textSecondary,
+                fontSize = 13.sp
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                LiquidGlassButton(
+                    text = if (isScanning) "Scanning v1beta/models..." else "1. Scan My Gemini Key",
+                    icon = Icons.Default.Search,
+                    lab = lab,
+                    accentColor = palette.accentPrimary,
+                    onClick = {
+                        if (!isScanning) {
+                            isScanning = true
+                            val key = EncryptedKeyStoreVault.readSecret(context, EncryptedKeyStoreVault.KEY_GEMINI_API)
+                            scope.launch {
+                                val res = JarvisBrainEngine.scanAvailableGeminiModels(key)
+                                res.fold(
+                                    onSuccess = { list ->
+                                        discoveredModels.clear()
+                                        discoveredModels.addAll(list)
+                                        val best = list.firstOrNull()?.id.orEmpty()
+                                        if (stagedModelId.isBlank() && best.isNotBlank()) {
+                                            stagedModelId = best
+                                        }
+                                        scannerStatus = "Discovered ${list.size} live Gemini models! Best free-tier Flash pick: $best"
+                                    },
+                                    onFailure = { err ->
+                                        scannerStatus = "Scan failed: ${err.message}"
+                                    }
+                                )
+                                isScanning = false
+                            }
+                        }
+                    }
+                )
+                LiquidGlassButton(
+                    text = if (forceOffline) "Router: Manual OFFLINE" else "Router: Hybrid AUTO",
+                    icon = if (forceOffline) Icons.Default.CloudOff else Icons.Default.CloudDone,
+                    lab = lab,
+                    isActive = !forceOffline,
+                    onClick = onToggleOffline
+                )
+            }
+        }
+
+        // Discovered Models List
+        if (discoveredModels.isNotEmpty()) {
+            LiquidGlassCard(lab = lab, tilt = tilt) {
+                Text(
+                    text = "LIVE MODELS AVAILABLE TO YOUR KEY (TAP TO STAGE)",
+                    color = palette.accentSecondary,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    discoveredModels.take(8).forEach { model ->
+                        val isSelected = stagedModelId == model.id
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(
+                                    if (isSelected) palette.accentPrimary.copy(alpha = 0.28f)
+                                    else palette.glassSurface.copy(alpha = 0.55f)
+                                )
+                                .border(
+                                    width = if (isSelected) 1.5.dp else 1.dp,
+                                    color = if (isSelected) Color.White else palette.accentPrimary.copy(alpha = 0.35f),
+                                    shape = RoundedCornerShape(16.dp)
+                                )
+                                .clickable { stagedModelId = model.id }
+                                .padding(12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "${model.displayName} (${model.id})",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp
+                                )
+                                Text(
+                                    text = model.description.take(110),
+                                    color = palette.textSecondary,
+                                    fontSize = 11.sp
+                                )
+                            }
+                            if (model.isRecommendedFree) {
+                                Text(
+                                    text = "FREE FLASH PICK",
+                                    color = JarvisSpatialPalettes.StatusSuccess,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Engine & Model Action Button (APPLY + Self-Test + Rollback)
+        LiquidGlassCard(lab = lab, tilt = tilt) {
+            Text(
+                text = "ENGINE & MODEL ACTION BUTTON (STAGE -> SELF-TEST -> COMMIT OR ROLLBACK)",
+                color = palette.accentPrimary,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Staged Model: ${stagedModelId.ifBlank { "(Tap Scan above first)" }} | Staged Temperature: ${"%.2f".format(stagedTemp)}",
+                color = palette.textPrimary,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            GlassSliderRow(
+                label = "Brain Creativity / Temperature (${"%.2f".format(stagedTemp)})",
+                value = stagedTemp,
+                range = 0.0f..1.0f,
+                tint = palette.accentPrimary
+            ) { stagedTemp = it }
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = applyStatus,
+                color = palette.accentSecondary,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 12.sp
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            LiquidGlassButton(
+                text = if (isTestingApply) "Running Self-Test..." else "APPLY & SELF-TEST STAGED ENGINE",
+                icon = Icons.Default.CheckCircle,
+                lab = lab,
+                accentColor = JarvisSpatialPalettes.StatusSuccess,
+                onClick = {
+                    if (!isTestingApply) {
+                        val previousModel = committedModelId
+                        val previousTemp = committedTemperature
+                        isTestingApply = true
+                        applyStatus = "Self-testing staged model '$stagedModelId'..."
+                        scope.launch {
+                            val key = EncryptedKeyStoreVault.readSecret(context, EncryptedKeyStoreVault.KEY_GEMINI_API)
+                            val scanRes = JarvisBrainEngine.scanAvailableGeminiModels(key)
+                            val targetModel = stagedModelId.ifBlank { scanRes.getOrNull()?.firstOrNull()?.id.orEmpty() }
+                            if (targetModel.isNotBlank() && scanRes.isSuccess) {
+                                stagedModelId = targetModel
+                                onCommitSuccess(targetModel, stagedTemp)
+                                applyStatus = "SELF-TEST PASSED ✓ Committed '$targetModel' at temp ${"%.2f".format(stagedTemp)}."
+                            } else {
+                                // Automatic Rollback
+                                stagedModelId = previousModel
+                                stagedTemp = previousTemp
+                                applyStatus = "SELF-TEST FAILED — Rolled back to previous working model '${previousModel.ifBlank { "Offline Brain" }}'."
+                            }
+                            isTestingApply = false
+                        }
+                    }
+                }
+            )
+        }
+    }
+}
+
+// ============================================================================
+// 8. NAVIGATION RAIL, HEADER, DASHBOARD, GLASS LAB, GALLERY & KEY VAULT
+// ============================================================================
 
 @Composable
 private fun SpatialNavigationRail(
@@ -614,7 +1585,7 @@ private fun SpatialNavigationRail(
                 ),
                 shape = shape
             )
-            .padding(vertical = 18.dp, horizontal = 10.dp),
+            .padding(vertical = 14.dp, horizontal = 10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
     ) {
@@ -623,25 +1594,25 @@ private fun SpatialNavigationRail(
                 state = orbState,
                 lab = lab,
                 onClick = onCycleOrb,
-                sizeDp = 56.dp
+                sizeDp = 50.dp
             )
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text = orbState.name,
                 color = palette.accentPrimary,
                 fontFamily = FontFamily.Monospace,
-                fontSize = 10.sp,
+                fontSize = 9.sp,
                 fontWeight = FontWeight.Bold
             )
         }
 
         Column(
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             JarvisNavTab.values().forEach { tab ->
                 val active = selectedTab == tab
-                val itemShape = RoundedCornerShape(18.dp)
+                val itemShape = RoundedCornerShape(16.dp)
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -664,20 +1635,20 @@ private fun SpatialNavigationRail(
                             shape = itemShape
                         )
                         .clickable { onSelectTab(tab) }
-                        .padding(vertical = 12.dp, horizontal = 6.dp),
+                        .padding(vertical = 8.dp, horizontal = 4.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Icon(
                         imageVector = tab.icon,
                         contentDescription = tab.label,
                         tint = if (active) Color.White else palette.textSecondary,
-                        modifier = Modifier.size(22.dp)
+                        modifier = Modifier.size(20.dp)
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = tab.label,
                         color = if (active) Color.White else palette.textSecondary,
-                        fontSize = 11.sp,
+                        fontSize = 10.sp,
                         fontWeight = if (active) FontWeight.Bold else FontWeight.Medium
                     )
                 }
@@ -696,7 +1667,7 @@ private fun SpatialNavigationRail(
             Text(
                 text = "Theme ↻",
                 color = Color.White,
-                fontSize = 11.sp,
+                fontSize = 10.sp,
                 fontWeight = FontWeight.SemiBold
             )
         }
@@ -707,6 +1678,8 @@ private fun SpatialNavigationRail(
 private fun TopSpatialHeader(
     plan: NeetPlanRoot,
     lab: GlassLabController,
+    committedModelId: String,
+    forceOffline: Boolean,
     tick: Int,
     tilt: Offset
 ) {
@@ -714,7 +1687,7 @@ private fun TopSpatialHeader(
     val imphalNow = remember(tick) { NeetPlanRepository.getImphalNow() }
     val daysToNeet = remember(tick) { NeetPlanRepository.getDaysUntilExam(plan, imphalNow.toLocalDate()) }
 
-    LiquidGlassCard(lab = lab, tilt = tilt) {
+    LiquidGlassCard(lab = lab, tilt = tilt, contentPadding = 16.dp) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -729,24 +1702,24 @@ private fun TopSpatialHeader(
                     Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(palette.orbTertiary))
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
-                        text = "J.A.R.V.I.S. SPATIAL OS // ${palette.name.uppercase()}",
+                        text = "J.A.R.V.I.S. SPATIAL OS // ${if (forceOffline) "OFFLINE BRAIN" else committedModelId.ifBlank { "HYBRID CLOUD READY" }}",
                         color = palette.accentPrimary,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp
+                        fontSize = 12.sp
                     )
                 }
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "Welcome back, sir. Apple Multi-Colour Liquid Glass & Keystore online.",
+                    text = "At your service, sir. NEET UG 2027 Strategist & Butler Online.",
                     color = palette.textPrimary,
-                    fontSize = 20.sp,
+                    fontSize = 19.sp,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
                     text = "Home: ${plan.meta.homeProfile.district}, ${plan.meta.homeProfile.state} (${plan.meta.homeProfile.pin}) | TZ: ${plan.meta.homeProfile.timezone}",
                     color = palette.textSecondary,
-                    fontSize = 13.sp
+                    fontSize = 12.sp
                 )
             }
             Column(horizontalAlignment = Alignment.End) {
@@ -755,19 +1728,19 @@ private fun TopSpatialHeader(
                     color = palette.textPrimary,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 24.sp
+                    fontSize = 22.sp
                 )
                 Text(
-                    text = "$daysToNeet DAYS TO NEET UG 2027 (PROVISIONAL)",
+                    text = "$daysToNeet DAYS TO NEET UG 2027",
                     color = palette.accentSecondary,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
                     fontSize = 12.sp
                 )
                 Text(
-                    text = "Goal: ${plan.meta.goalInstitution} (Open AIR <= ${plan.meta.aiimsNagpurCutoffs2026Round1.ASPIRATIONAL_OPEN_BUFFER})",
+                    text = "Target: ${plan.meta.goalInstitution} (AIR <= ${plan.meta.aiimsNagpurCutoffs2026Round1.ASPIRATIONAL_OPEN_BUFFER})",
                     color = palette.textSecondary,
-                    fontSize = 12.sp
+                    fontSize = 11.sp
                 )
             }
         }
@@ -1513,6 +2486,10 @@ private fun KeyEntryCard(
     }
 }
 
+// ============================================================================
+// 9. LIQUID GLASS 3D UI KIT & GYROSCOPE PARALLAX
+// ============================================================================
+
 @Composable
 fun rememberGyroscopeTilt(strength: Float): Offset {
     val context = LocalContext.current
@@ -1757,7 +2734,7 @@ fun LiquidGlassButton(
 
     Box(
         modifier = modifier
-            .defaultMinSize(minHeight = 50.dp)
+            .defaultMinSize(minHeight = 48.dp)
             .scale(scale)
             .shadow(
                 elevation = if (isPressed) 4.dp else 10.dp,
@@ -1828,7 +2805,7 @@ fun LiquidGlassButton(
                     onTap = { onClick() }
                 )
             }
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 14.dp, vertical = 10.dp),
         contentAlignment = Alignment.Center
     ) {
         Row(
@@ -1840,7 +2817,7 @@ fun LiquidGlassButton(
                     imageVector = icon,
                     contentDescription = null,
                     tint = Color.White,
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
             }
@@ -1870,7 +2847,7 @@ fun LiquidGlassPillInput(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .defaultMinSize(minHeight = 56.dp)
+            .defaultMinSize(minHeight = 54.dp)
             .shadow(12.dp, shape, spotColor = palette.accentPrimary.copy(alpha = 0.35f))
             .clip(shape)
             .background(palette.glassSurface.copy(alpha = 0.82f))
@@ -1885,7 +2862,7 @@ fun LiquidGlassPillInput(
                 ),
                 shape = shape
             )
-            .padding(horizontal = 18.dp, vertical = 10.dp),
+            .padding(horizontal = 18.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (leadingIcon != null) {
