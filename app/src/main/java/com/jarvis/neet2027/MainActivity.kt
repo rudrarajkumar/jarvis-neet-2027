@@ -70,6 +70,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Error
@@ -164,10 +165,6 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
-// ============================================================================
-// 1. XIAOMI SURVIVAL HELPER & RAM TELEMETRY
-// ============================================================================
-
 object XiaomiSurvivalHelper {
     fun isIgnoringBatteryOptimizations(context: Context): Boolean {
         val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -242,10 +239,6 @@ object XiaomiSurvivalHelper {
         context.startActivity(intent)
     }
 }
-
-// ============================================================================
-// 2. PALETTES, GLASS CONTROLLER & NAVIGATION TABS
-// ============================================================================
 
 data class JarvisPalettePreset(
     val id: String,
@@ -392,22 +385,20 @@ enum class VoiceOrbState {
 }
 
 private enum class JarvisNavTab(val label: String, val icon: ImageVector) {
-    DASHBOARD("HUD Home", Icons.Default.Dashboard),
+    NEET_COMMAND("NEET Hub", Icons.Default.Schedule),
+    CALENDAR_PROGRESS("Calendar", Icons.Default.DateRange),
     JARVIS_CHAT("Jarvis AI", Icons.Default.Chat),
     BRAIN_ROUTER("AI Engine", Icons.Default.SettingsSuggest),
+    DASHBOARD("HUD Home", Icons.Default.Dashboard),
     GLASS_LAB("Glass Lab", Icons.Default.Tune),
     GALLERY("UI Gallery", Icons.Default.Palette),
     API_VAULT("Key Vault", Icons.Default.Key)
 }
 
-// ============================================================================
-// 3. HARDWARE KEYSTORE VAULT & CHAT HISTORY STORAGE
-// ============================================================================
-
 @Serializable
 data class ChatMessageItem(
     val id: Long,
-    val role: String, // "user" or "jarvis"
+    val role: String,
     val visibleText: String,
     val emotionTag: String = "calm",
     val engineBadge: String = "CLOUD",
@@ -531,12 +522,8 @@ object EncryptedKeyStoreVault {
     }
 }
 
-// ============================================================================
-// 4. DYNAMIC CLOUD MODEL SCANNER, HYBRID ROUTER & OFFLINE NEET BRAIN
-// ============================================================================
-
 data class DiscoveredModelInfo(
-    val id: String, // e.g., "gemini-2.5-flash"
+    val id: String,
     val displayName: String,
     val description: String,
     val isRecommendedFree: Boolean
@@ -668,7 +655,6 @@ object JarvisBrainEngine {
             )
         }
 
-        // Dynamic Model Resolution: never hard-code; if empty, scan once automatically
         val resolvedModel = if (modelId.isNotBlank()) {
             modelId
         } else {
@@ -766,7 +752,6 @@ object JarvisBrainEngine {
                 )
             },
             onFailure = { err ->
-                // Automatic Hybrid Router fallback to Offline Brain on network drop or HTTP 429 rate-limit
                 val offlineReply = buildOfflinePlanReply(plan, activeSlot.title, activeSlot.instruction, lecturesSummary, userQuery)
                 val (emotion, cleaned) = parseEmotionAndCleanText(offlineReply)
                 ChatMessageItem(
@@ -808,42 +793,36 @@ object JarvisBrainEngine {
     }
 }
 
-// ============================================================================
-// 5. MAIN ACTIVITY & ROOT SPATIAL SHELL
-// ============================================================================
-
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
-                JarvisChapterThreeApp()
+                JarvisChapterFourApp()
             }
         }
     }
 }
 
 @Composable
-fun JarvisChapterThreeApp() {
+fun JarvisChapterFourApp() {
     val context = LocalContext.current
     val plan = remember { NeetPlanRepository.loadPlan(context) }
     val masterPrompt = remember { NeetPlanRepository.loadMasterPrompt(context) }
     val lab = remember { GlassLabController() }
     val palette = lab.currentPalette
 
-    var selectedTab by remember { mutableStateOf(JarvisNavTab.JARVIS_CHAT) }
+    var selectedTab by remember { mutableStateOf(JarvisNavTab.NEET_COMMAND) }
     var orbState by remember { mutableStateOf(VoiceOrbState.IDLE) }
     var showBootOverlay by remember { mutableStateOf(true) }
     var tick by remember { mutableIntStateOf(0) }
 
-    // Committed vs Staged Engine State (for the APPLY & Self-Test button)
     var committedModelId by remember { mutableStateOf(EncryptedKeyStoreVault.getCommittedModel(context)) }
     var committedTemperature by remember { mutableFloatStateOf(EncryptedKeyStoreVault.getCommittedTemp(context)) }
     var forceOfflineRouter by remember { mutableStateOf(false) }
     val discoveredModels = remember { mutableStateListOf<DiscoveredModelInfo>() }
 
-    // Persistent Chat History
     val chatMessages = remember {
         val loaded = EncryptedKeyStoreVault.loadChatHistory(context)
         mutableStateListOf<ChatMessageItem>().apply {
@@ -852,9 +831,9 @@ fun JarvisChapterThreeApp() {
                     ChatMessageItem(
                         id = 1L,
                         role = "jarvis",
-                        visibleText = "Good day, sir. Your NEET UG 2027 study brain is online for Imphal East (Asia/Kolkata). Ask me what to study right now, test a Physics/Chemistry/Biology concept, or tap 'AI Engine' on the left rail to scan your free Gemini models.",
+                        visibleText = "Good day, sir. Chapter 4 NEET Command & Imphal Weather Telemetry are online. Use 'NEET Hub' for live Open-Meteo weather, timetable briefings, and your 50-minute Pomodoro, or 'Calendar' to tick lectures and log mock-test error causes.",
                         emotionTag = "calm",
-                        engineBadge = "SYSTEM READY",
+                        engineBadge = "CHAPTER 4 READY",
                         timestampIst = "ONLINE"
                     )
                 )
@@ -865,7 +844,7 @@ fun JarvisChapterThreeApp() {
     }
 
     LaunchedEffect(Unit) {
-        delay(1000L)
+        delay(900L)
         showBootOverlay = false
     }
 
@@ -919,11 +898,14 @@ fun JarvisChapterThreeApp() {
                 )
 
                 when (selectedTab) {
-                    JarvisNavTab.DASHBOARD -> DashboardSpatialContent(
+                    JarvisNavTab.NEET_COMMAND -> NeetCoreCommandScreen(
                         plan = plan,
-                        masterPrompt = masterPrompt,
                         lab = lab,
-                        tick = tick,
+                        tilt = tilt
+                    )
+                    JarvisNavTab.CALENDAR_PROGRESS -> InteractiveCalendarAndProgressScreen(
+                        plan = plan,
+                        lab = lab,
                         tilt = tilt
                     )
                     JarvisNavTab.JARVIS_CHAT -> JarvisGlassChatScreen(
@@ -950,6 +932,13 @@ fun JarvisChapterThreeApp() {
                             committedTemperature = newTemp
                             EncryptedKeyStoreVault.saveCommittedEngine(context, newModel, newTemp)
                         },
+                        tilt = tilt
+                    )
+                    JarvisNavTab.DASHBOARD -> DashboardSpatialContent(
+                        plan = plan,
+                        masterPrompt = masterPrompt,
+                        lab = lab,
+                        tick = tick,
                         tilt = tilt
                     )
                     JarvisNavTab.GLASS_LAB -> GlassLabScreen(lab = lab, tilt = tilt)
@@ -988,7 +977,7 @@ fun JarvisChapterThreeApp() {
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "J.A.R.V.I.S. SPATIAL OS // CHAPTER 3 BRAIN ONLINE",
+                        text = "J.A.R.V.I.S. SPATIAL OS // CHAPTER 4 NEET COMMAND ONLINE",
                         color = palette.accentPrimary,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
@@ -996,7 +985,7 @@ fun JarvisChapterThreeApp() {
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Loading NEET UG 2027 Master Prompt & Hybrid Cloud/Offline Router... (Tap to skip)",
+                        text = "Syncing Imphal East Open-Meteo Weather, Timetable Instructor & 26-Week Calendar... (Tap to skip)",
                         color = palette.textSecondary,
                         fontSize = 13.sp
                     )
@@ -1005,10 +994,6 @@ fun JarvisChapterThreeApp() {
         }
     }
 }
-
-// ============================================================================
-// 6. CHAPTER 3: GEMINI-STYLE MULTI-COLOUR GLASS CHAT SCREEN
-// ============================================================================
 
 @Composable
 private fun JarvisGlassChatScreen(
@@ -1042,7 +1027,6 @@ private fun JarvisGlassChatScreen(
     )
 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        // Live Privacy & Hybrid Router Status Bar
         LiquidGlassCard(lab = lab, tilt = tilt, contentPadding = 14.dp) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1123,7 +1107,6 @@ private fun JarvisGlassChatScreen(
             }
         }
 
-        // Search History Bar & Suggestion Chips
         LiquidGlassCard(lab = lab, tilt = tilt, contentPadding = 14.dp) {
             LiquidGlassPillInput(
                 value = searchFilter,
@@ -1160,7 +1143,6 @@ private fun JarvisGlassChatScreen(
             }
         }
 
-        // Glass Chat Message Stream
         val visibleMessages = remember(messages.size, searchFilter) {
             if (searchFilter.isBlank()) messages.toList()
             else messages.filter { it.visibleText.contains(searchFilter, ignoreCase = true) }
@@ -1266,7 +1248,7 @@ private fun JarvisGlassChatScreen(
 
                 if (isStreaming) {
                     Text(
-                        text = "J.A.R.V.I.S. isconsulting your NEET 2027 timetable & NCERT brain...",
+                        text = "J.A.R.V.I.S. is consulting your NEET 2027 timetable & NCERT brain...",
                         color = palette.accentPrimary,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 12.sp
@@ -1275,7 +1257,6 @@ private fun JarvisGlassChatScreen(
             }
         }
 
-        // Floating Glass Pill Chat Input
         LiquidGlassPillInput(
             value = userDraft,
             onValueChange = { userDraft = it },
@@ -1332,10 +1313,6 @@ private fun JarvisGlassChatScreen(
     }
 }
 
-// ============================================================================
-// 7. CHAPTER 3: DYNAMIC MODEL SCANNER & ENGINE 'APPLY' BUTTON WITH ROLLBACK
-// ============================================================================
-
 @Composable
 private fun BrainRouterAndScannerScreen(
     lab: GlassLabController,
@@ -1365,7 +1342,6 @@ private fun BrainRouterAndScannerScreen(
     val (availRamMb, totalRamMb) = remember { XiaomiSurvivalHelper.getAvailableRamMb(context) }
 
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        // RAM & Hybrid Router Card
         LiquidGlassCard(lab = lab, tilt = tilt) {
             Text(
                 text = "DYNAMIC MODEL SCANNER & XIAOMI PAD 6 RAM TELEMETRY",
@@ -1429,7 +1405,6 @@ private fun BrainRouterAndScannerScreen(
             }
         }
 
-        // Discovered Models List
         if (discoveredModels.isNotEmpty()) {
             LiquidGlassCard(lab = lab, tilt = tilt) {
                 Text(
@@ -1489,7 +1464,6 @@ private fun BrainRouterAndScannerScreen(
             }
         }
 
-        // Engine & Model Action Button (APPLY + Self-Test + Rollback)
         LiquidGlassCard(lab = lab, tilt = tilt) {
             Text(
                 text = "ENGINE & MODEL ACTION BUTTON (STAGE -> SELF-TEST -> COMMIT OR ROLLBACK)",
@@ -1539,7 +1513,6 @@ private fun BrainRouterAndScannerScreen(
                                 onCommitSuccess(targetModel, stagedTemp)
                                 applyStatus = "SELF-TEST PASSED ✓ Committed '$targetModel' at temp ${"%.2f".format(stagedTemp)}."
                             } else {
-                                // Automatic Rollback
                                 stagedModelId = previousModel
                                 stagedTemp = previousTemp
                                 applyStatus = "SELF-TEST FAILED — Rolled back to previous working model '${previousModel.ifBlank { "Offline Brain" }}'."
@@ -1552,10 +1525,6 @@ private fun BrainRouterAndScannerScreen(
         }
     }
 }
-
-// ============================================================================
-// 8. NAVIGATION RAIL, HEADER, DASHBOARD, GLASS LAB, GALLERY & KEY VAULT
-// ============================================================================
 
 @Composable
 private fun SpatialNavigationRail(
@@ -1585,7 +1554,7 @@ private fun SpatialNavigationRail(
                 ),
                 shape = shape
             )
-            .padding(vertical = 14.dp, horizontal = 10.dp),
+            .padding(vertical = 12.dp, horizontal = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
     ) {
@@ -1594,9 +1563,9 @@ private fun SpatialNavigationRail(
                 state = orbState,
                 lab = lab,
                 onClick = onCycleOrb,
-                sizeDp = 50.dp
+                sizeDp = 46.dp
             )
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = orbState.name,
                 color = palette.accentPrimary,
@@ -1607,12 +1576,16 @@ private fun SpatialNavigationRail(
         }
 
         Column(
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier
+                .weight(1f)
+                .padding(vertical = 6.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             JarvisNavTab.values().forEach { tab ->
                 val active = selectedTab == tab
-                val itemShape = RoundedCornerShape(16.dp)
+                val itemShape = RoundedCornerShape(14.dp)
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1635,14 +1608,14 @@ private fun SpatialNavigationRail(
                             shape = itemShape
                         )
                         .clickable { onSelectTab(tab) }
-                        .padding(vertical = 8.dp, horizontal = 4.dp),
+                        .padding(vertical = 7.dp, horizontal = 4.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Icon(
                         imageVector = tab.icon,
                         contentDescription = tab.label,
                         tint = if (active) Color.White else palette.textSecondary,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
@@ -1662,7 +1635,7 @@ private fun SpatialNavigationRail(
                 .clickable {
                     lab.activePresetIndex = (lab.activePresetIndex + 1) % JarvisSpatialPalettes.allPresets.size
                 }
-                .padding(horizontal = 8.dp, vertical = 6.dp)
+                .padding(horizontal = 8.dp, vertical = 5.dp)
         ) {
             Text(
                 text = "Theme ↻",
@@ -1711,7 +1684,7 @@ private fun TopSpatialHeader(
                 }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "At your service, sir. NEET UG 2027 Strategist & Butler Online.",
+                    text = "At your service, sir. NEET UG 2027 Command & Weather Online.",
                     color = palette.textPrimary,
                     fontSize = 19.sp,
                     fontWeight = FontWeight.Bold
@@ -2485,10 +2458,6 @@ private fun KeyEntryCard(
         )
     }
 }
-
-// ============================================================================
-// 9. LIQUID GLASS 3D UI KIT & GYROSCOPE PARALLAX
-// ============================================================================
 
 @Composable
 fun rememberGyroscopeTilt(strength: Float): Offset {
