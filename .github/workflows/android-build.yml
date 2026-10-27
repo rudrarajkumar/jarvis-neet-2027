@@ -1,0 +1,72 @@
+name: Build Jarvis NEET 2027 APK
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout, Setup JDK 17 + Gradle 8.10.2 & Build Signed APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          set -e
+          git clone --depth 1 --branch "${GITHUB_REF_NAME}" "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" .
+
+          export JAVA_HOME="${JAVA_HOME_17_X64:-/usr/lib/jvm/temurin-17-jdk-amd64}"
+          export PATH="${JAVA_HOME}/bin:${PATH}"
+          java -version
+
+          if [ ! -d "/tmp/gradle-8.10.2" ]; then
+            curl -sL https://services.gradle.org/distributions/gradle-8.10.2-bin.zip -o /tmp/gradle.zip
+            unzip -q /tmp/gradle.zip -d /tmp
+          fi
+          export PATH="/tmp/gradle-8.10.2/bin:${PATH}"
+          gradle -v
+
+          rm -f /tmp/jarvis-release.jks
+          if [ -n "$SIGNING_KEYSTORE_BASE64" ]; then
+            echo "$SIGNING_KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > /tmp/jarvis-release.jks || rm -f /tmp/jarvis-release.jks
+          fi
+
+          STORE_PASS="${SIGNING_STORE_PASSWORD:-jarvis2027}"
+          KEY_ALIAS="${SIGNING_KEY_ALIAS:-jarvis}"
+          KEY_PASS="${SIGNING_KEY_PASSWORD:-jarvis2027}"
+
+          if [ ! -f "/tmp/jarvis-release.jks" ] || ! keytool -list -keystore /tmp/jarvis-release.jks -storepass "$STORE_PASS" >/dev/null 2>&1; then
+            rm -f /tmp/jarvis-release.jks
+            keytool -genkeypair -v \
+              -keystore /tmp/jarvis-release.jks \
+              -alias "$KEY_ALIAS" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass "$STORE_PASS" \
+              -keypass "$KEY_PASS" \
+              -dname "CN=JarvisNEET2027, OU=Study, O=AIIMSNagpur, L=ImphalEast, ST=Manipur, C=IN"
+            echo "=================================================================="
+            echo "COPY THIS BASE64 LINE INTO REPO SECRET 'SIGNING_KEYSTORE_BASE64':"
+            base64 -w 0 /tmp/jarvis-release.jks
+            echo ""
+            echo "=================================================================="
+          fi
+
+          gradle assembleRelease --stacktrace --no-daemon
+
+          cp app/build/outputs/apk/release/app-release.apk Jarvis-NEET2027.apk
+
+          gh release create "latest-apk" Jarvis-NEET2027.apk \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "J.A.R.V.I.S. NEET 2027 APK" \
+            --notes "Tap Jarvis-NEET2027.apk below to download and install directly on your Xiaomi Pad 6." \
+            --clobber
