@@ -1,5 +1,6 @@
 package com.jarvis.neet2027.util
 
+import android.app.AppOpsManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -7,13 +8,41 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.PowerManager
+import android.os.Process
 import android.provider.Settings
 
 object XiaomiSurvivalHelper {
+    private const val PREFS_NAME = "jarvis_xiaomi_survival_prefs"
+    private const val KEY_AUTOSTART_CONFIRMED = "autostart_confirmed"
+    private const val MIUI_OP_AUTO_START = 10008
 
     fun isIgnoringBatteryOptimizations(context: Context): Boolean {
         val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
         return pm.isIgnoringBatteryOptimizations(context.packageName)
+    }
+
+    fun isXiaomiAutostartEnabled(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (prefs.getBoolean(KEY_AUTOSTART_CONFIRMED, false)) return true
+
+        return runCatching {
+            val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+            val method = AppOpsManager::class.java.getMethod(
+                "checkOpNoThrow",
+                Int::class.javaPrimitiveType,
+                Int::class.javaPrimitiveType,
+                String::class.java
+            )
+            val mode = method.invoke(appOps, MIUI_OP_AUTO_START, Process.myUid(), context.packageName) as Int
+            mode == AppOpsManager.MODE_ALLOWED
+        }.getOrDefault(false)
+    }
+
+    fun markXiaomiAutostartConfirmed(context: Context, confirmed: Boolean = true) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_AUTOSTART_CONFIRMED, confirmed)
+            .apply()
     }
 
     fun hasAllFilesAccess(): Boolean {
@@ -37,6 +66,7 @@ object XiaomiSurvivalHelper {
     }
 
     fun openXiaomiAutostartSettings(context: Context) {
+        markXiaomiAutostartConfirmed(context, true)
         val xiaomiIntents = listOf(
             Intent().apply {
                 component = ComponentName(
