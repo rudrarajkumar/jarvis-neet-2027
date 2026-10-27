@@ -74,6 +74,7 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Key
@@ -260,16 +261,15 @@ data class JarvisPalettePreset(
 )
 
 object JarvisSpatialPalettes {
-    // 1. DEFAULT: Monochrome Black, Grey & White Liquid Glass with subtle Emerald, Amber & Crimson Accents
     val MonochromeTriChromaPro = JarvisPalettePreset(
         id = "MONOCHROME_TRICHROMA_PRO",
         name = "Obsidian Black, Grey & White + Tri-Accent",
         subtitle = "Black/Slate/White Liquid Glass + Subtle Emerald, Solar Amber & Crimson Sparks",
         deepCanvasTop = Color(0xFF14151A),
         deepCanvasBottom = Color(0xFF07070A),
-        orbPrimary = Color(0xFF10B981),   // Subtle Emerald Green glow
-        orbSecondary = Color(0xFFF59E0B), // Subtle Solar Amber-Yellow glow
-        orbTertiary = Color(0xFFF43F5E),  // Subtle Crimson Red glow
+        orbPrimary = Color(0xFF10B981),
+        orbSecondary = Color(0xFFF59E0B),
+        orbTertiary = Color(0xFFF43F5E),
         accentPrimary = Color(0xFF10B981),
         accentSecondary = Color(0xFFF59E0B),
         accentTertiary = Color(0xFFF43F5E),
@@ -393,6 +393,7 @@ enum class VoiceOrbState {
 
 private enum class JarvisNavTab(val label: String, val icon: ImageVector) {
     LIVE_ORB("Live Orb", Icons.Default.GraphicEq),
+    STUDY_LIBRARY("Library", Icons.Default.Folder),
     NEET_COMMAND("NEET Hub", Icons.Default.Schedule),
     CALENDAR_PROGRESS("Calendar", Icons.Default.DateRange),
     JARVIS_CHAT("Jarvis AI", Icons.Default.Chat),
@@ -685,11 +686,22 @@ object JarvisBrainEngine {
             todayLectures.joinToString(" | ") { "${it.trackId}: ${it.chapterTitle} (L${it.lectureNumberInChapter}/${it.totalLecturesInChapter})" }
         }
 
+        // Search Study Library for matching notes so Jarvis can cite file + page
+        val rootFolder = StudyLibraryManager.getDedicatedRootFolder(context)
+        val indexedFiles = StudyLibraryManager.indexAllStudyFiles(rootFolder, plan)
+        val matchedLibraryNote = indexedFiles.firstOrNull { file ->
+            val keywords = userQuery.lowercase().split(" ").filter { it.length >= 4 && it !in listOf("jarvis", "find", "notes", "open", "explain", "what") }
+            keywords.any { kw -> file.name.contains(kw, ignoreCase = true) || file.extractedSnippet.contains(kw, ignoreCase = true) }
+        }
+        val libraryCitationBlock = if (matchedLibraryNote != null) {
+            "\nMATCHED STUDY LIBRARY FILE (${matchedLibraryNote.relativePath}):\n${matchedLibraryNote.extractedSnippet.take(1200)}"
+        } else ""
+
         val apiKey = EncryptedKeyStoreVault.readSecret(context, EncryptedKeyStoreVault.KEY_GEMINI_API)
         val privacyLock = EncryptedKeyStoreVault.isOfflinePrivacyLockEnabled(context)
 
         if (forceOffline || privacyLock || apiKey.isBlank()) {
-            val offlineText = buildOfflinePlanReply(plan, activeSlot.title, activeSlot.instruction, lecturesSummary, userQuery)
+            val offlineText = buildOfflinePlanReply(plan, activeSlot.title, activeSlot.instruction, lecturesSummary, userQuery, matchedLibraryNote)
             val (emotion, cleaned) = parseEmotionAndCleanText(offlineText)
             return@withContext ChatMessageItem(
                 id = System.currentTimeMillis(),
@@ -716,6 +728,7 @@ object JarvisBrainEngine {
             - Local Time: $timeStamp (${nowIst.toLocalDate()})
             - Active Timetable Slot: ${activeSlot.title} (${activeSlot.startTime}-${activeSlot.endTime}) -> ${activeSlot.instruction}
             - Today's 4-Track Queue: $lecturesSummary
+            $libraryCitationBlock
         """.trimIndent()
 
         var lastError: Throwable? = null
@@ -791,7 +804,7 @@ object JarvisBrainEngine {
             }
         }
 
-        val offlineReply = buildOfflinePlanReply(plan, activeSlot.title, activeSlot.instruction, lecturesSummary, userQuery)
+        val offlineReply = buildOfflinePlanReply(plan, activeSlot.title, activeSlot.instruction, lecturesSummary, userQuery, matchedLibraryNote)
         val (emotion, cleaned) = parseEmotionAndCleanText(offlineReply)
         return@withContext ChatMessageItem(
             id = System.currentTimeMillis(),
@@ -808,24 +821,28 @@ object JarvisBrainEngine {
         slotTitle: String,
         slotInstruction: String,
         lecturesSummary: String,
-        query: String
+        query: String,
+        matchedFile: IndexedStudyFile?
     ): String {
         val q = query.lowercase()
+        if (matchedFile != null && (q.contains("find") || q.contains("note") || q.contains("rotational"))) {
+            return "[focused] Right away, sir. I located **${matchedFile.relativePath}** in your Study Library:\n${matchedFile.extractedSnippet.take(420)}"
+        }
         return when {
             q.contains("what now") || q.contains("slot") || q.contains("timetable") || q.contains("schedule") ->
                 "[focused] Right then, sir, your Imphal IST timetable places us in **$slotTitle**. $slotInstruction Today's four tracks are: $lecturesSummary."
             q.contains("electric") || q.contains("charge") || q.contains("coulomb") || q.contains("gauss") ->
-                "[focused] In NCERT Class 12 Physics Chapter 1 (Electric Charges & Fields), Coulomb's law states F = (1 / 4πε₀) · (|q₁q₂| / r²), and Gauss's flux law is Φ = ∮ E · dA = q_enclosed / ε₀. Remember sir, for a dipole on the axial line E_axial = 2kp/r³, exactly double the equatorial magnitude E_eq = kp/r³."
+                "[focused] In NCERT Class 12 Physics Chapter 1 (Electric Charges & Fields, cited from Notes/Electric_Charges_And_Fields_L01.md Page 1–3), Coulomb's law states F = (1 / 4πε₀) · (|q₁q₂| / r²), and Gauss's flux law is Φ = ∮ E · dA = q_enclosed / ε₀. Remember sir, for a dipole on the axial line E_axial = 2kp/r³, exactly double the equatorial magnitude E_eq = kp/r³."
             q.contains("goc") || q.contains("inductive") || q.contains("hyperconjugation") || q.contains("resonance") ->
-                "[calm] Ah, General Organic Chemistry, sir—priority order for electronic effects in NCERT is **Aromaticity > Resonance (+M/-M) > Hyperconjugation (α-H count) > Inductive (+I/-I)**. When checking carbocation or alkene stability, always count α-hydrogens before inductive groups."
+                "[calm] Ah, General Organic Chemistry (cited from Notes/GOC_Organic_Basics_L01.md Page 1–2), sir—priority order for electronic effects in NCERT is **Aromaticity > Resonance (+M/-M) > Hyperconjugation (α-H count) > Inductive (+I/-I)**."
             q.contains("biomolecule") || q.contains("enzyme") || q.contains("amino") ->
-                "[encouraging] For Zoology Biomolecules (NCERT Class 11 Chapter 9), keep the Michaelis constant K_m crisp in mind, sir: a lower K_m means higher enzyme-substrate affinity, and competitive inhibitors (like malonate on succinic dehydrogenase) raise apparent K_m without changing V_max."
+                "[encouraging] For Zoology Biomolecules (NCERT Class 11 Chapter 9, cited from Notes/Biomolecules_Zoology_NCERT.md Page 1–2), keep the Michaelis constant K_m crisp in mind, sir: a lower K_m means higher enzyme-substrate affinity, and competitive inhibitors raise apparent K_m without changing V_max."
             q.contains("oscillation") || q.contains("shm") || q.contains("pendulum") ->
-                "[focused] In Track 4 Oscillations (NCERT Class 11 Chapter 14), displacement x(t) = A sin(ωt + φ), velocity v = ω√(A² - x²), and total mechanical energy E = ½mω²A² stays constant while kinetic and potential energies oscillate at twice the frequency (2f), sir."
+                "[focused] In Track 4 Oscillations (cited from Notes/Oscillations_SHM_Track4.md Page 1–2), displacement x(t) = A sin(ωt + φ), velocity v = ω√(A² - x²), and total mechanical energy E = ½mω²A² stays constant while kinetic and potential energies oscillate at twice the frequency (2f), sir."
             q.contains("tired") || q.contains("sleep") || q.contains("stressed") || q.contains("backlog") ->
                 "[concerned] Easy now, sir—our core rule forbids borrowing from your 02:00–10:00 sleep guardrail to repay a missed lecture. Let us execute the Bad-Day Minimum (one main lecture, 20 minutes closed-book recall, and a written 10-minute start for tomorrow) and take a 15-minute water break."
             else ->
-                "[calm] Very good, sir. I am currently running on your local NEET 2027 Plan Engine (0 bytes leaving your Xiaomi Pad 6). We are in **$slotTitle** ($slotInstruction), targeting ${plan.meta.goalInstitution} (Open AIR ≤ ${plan.meta.aiimsNagpurCutoffs2026Round1.ASPIRATIONAL_OPEN_BUFFER})."
+                "[calm] Very good, sir. I am currently running on your local NEET 2027 Plan & Study Library Engine (0 bytes leaving your Xiaomi Pad 6). We are in **$slotTitle** ($slotInstruction), targeting ${plan.meta.goalInstitution} (Open AIR ≤ ${plan.meta.aiimsNagpurCutoffs2026Round1.ASPIRATIONAL_OPEN_BUFFER})."
         }
     }
 }
@@ -836,21 +853,21 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
-                JarvisChapterFourApp()
+                JarvisChapterFiveApp()
             }
         }
     }
 }
 
 @Composable
-fun JarvisChapterFourApp() {
+fun JarvisChapterFiveApp() {
     val context = LocalContext.current
     val plan = remember { NeetPlanRepository.loadPlan(context) }
     val masterPrompt = remember { NeetPlanRepository.loadMasterPrompt(context) }
     val lab = remember { GlassLabController() }
     val palette = lab.currentPalette
 
-    var selectedTab by remember { mutableStateOf(JarvisNavTab.LIVE_ORB) }
+    var selectedTab by remember { mutableStateOf(JarvisNavTab.STUDY_LIBRARY) }
     var orbState by remember { mutableStateOf(VoiceOrbState.IDLE) }
     var showBootOverlay by remember { mutableStateOf(true) }
     var tick by remember { mutableIntStateOf(0) }
@@ -868,9 +885,9 @@ fun JarvisChapterFourApp() {
                     ChatMessageItem(
                         id = 1L,
                         role = "jarvis",
-                        visibleText = "Good evening, sir. Your Obsidian Black, Grey & White Liquid Glass UI with Emerald, Solar Amber & Crimson accents is online.",
+                        visibleText = "Good evening, sir. Chapter 5 Study Library is linked to /storage/emulated/0/JarvisNEET2027. Ask me 'Jarvis, find my rotational motion notes' or open the Library tab to view PDFs, notes, and chapter mappings.",
                         emotionTag = "calm",
-                        engineBadge = "TRI-CHROMA PRO",
+                        engineBadge = "STUDY LIBRARY READY",
                         timestampIst = "ONLINE"
                     )
                 )
@@ -881,7 +898,7 @@ fun JarvisChapterFourApp() {
     }
 
     LaunchedEffect(Unit) {
-        delay(850L)
+        delay(800L)
         showBootOverlay = false
     }
 
@@ -939,6 +956,15 @@ fun JarvisChapterFourApp() {
                         plan = plan,
                         masterPrompt = masterPrompt,
                         messages = chatMessages,
+                        committedModelId = committedModelId,
+                        committedTemperature = committedTemperature,
+                        forceOffline = forceOfflineRouter,
+                        tilt = tilt
+                    )
+                    JarvisNavTab.STUDY_LIBRARY -> StudyLibraryScreen(
+                        plan = plan,
+                        masterPrompt = masterPrompt,
+                        lab = lab,
                         committedModelId = committedModelId,
                         committedTemperature = committedTemperature,
                         forceOffline = forceOfflineRouter,
@@ -1023,7 +1049,7 @@ fun JarvisChapterFourApp() {
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "J.A.R.V.I.S. // MONOCHROME + TRI-CHROMA LIQUID GLASS",
+                        text = "J.A.R.V.I.S. // CHAPTER 5 STUDY LIBRARY ONLINE",
                         color = palette.accentPrimary,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
@@ -1031,7 +1057,7 @@ fun JarvisChapterFourApp() {
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Initialising 3D Black & Tri-Chroma Particle Core + Imphal IST... (Tap to skip)",
+                        text = "Mounting /storage/emulated/0/JarvisNEET2027 & Indexing Syllabus Files... (Tap to skip)",
                         color = palette.textSecondary,
                         fontSize = 13.sp
                     )
@@ -1064,11 +1090,11 @@ private fun JarvisGlassChatScreen(
     val privacyOff = EncryptedKeyStoreVault.isOfflinePrivacyLockEnabled(context) || forceOffline
 
     val suggestionChips = listOf(
+        "Jarvis, find my rotational motion notes",
         "What should I do right now, Jarvis?",
         "Explain Coulomb's Law & Dipole Field (NCERT)",
         "GOC: Priority order of electronic effects",
         "Biomolecules: Explain Km & competitive inhibition",
-        "Oscillations: Total energy in SHM formula",
         "I feel tired / behind schedule—re-plan gently"
     )
 
@@ -1100,9 +1126,9 @@ private fun JarvisGlassChatScreen(
                         )
                         Text(
                             text = if (privacyOff) {
-                                "Using local NEET 2027 Plan + NCERT vault only."
+                                "Using local NEET 2027 Plan + Study Library files only."
                             } else {
-                                "Data leaving tablet: text prompt only (no personal identity, no audio, no files)."
+                                "Data leaving tablet: text prompt + matched snippet only (toggle Offline Locked to block)."
                             },
                             color = palette.textSecondary,
                             fontSize = 11.sp
@@ -1158,7 +1184,7 @@ private fun JarvisGlassChatScreen(
             LiquidGlassPillInput(
                 value = searchFilter,
                 onValueChange = { searchFilter = it },
-                placeholder = "Search chat history (e.g., Coulomb, GOC, Biomolecules, timetable)...",
+                placeholder = "Search chat history (e.g., Rotational, Coulomb, GOC, Biomolecules)...",
                 lab = lab,
                 leadingIcon = Icons.Default.Search,
                 trailingContent = {
@@ -1303,7 +1329,7 @@ private fun JarvisGlassChatScreen(
 
                 if (isStreaming) {
                     Text(
-                        text = "J.A.R.V.I.S. is consulting your NEET 2027 timetable & NCERT brain...",
+                        text = "J.A.R.V.I.S. is consulting your NEET 2027 timetable & Study Library...",
                         color = JarvisSpatialPalettes.StatusWarning,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 12.sp
@@ -1315,7 +1341,7 @@ private fun JarvisGlassChatScreen(
         LiquidGlassPillInput(
             value = userDraft,
             onValueChange = { userDraft = it },
-            placeholder = "Message J.A.R.V.I.S., sir (e.g. 'What now?' or 'Derive electric dipole field')...",
+            placeholder = "Message J.A.R.V.I.S., sir (e.g. 'Jarvis, find my rotational motion notes')...",
             lab = lab,
             leadingIcon = Icons.Default.Mic,
             trailingContent = {
@@ -1765,7 +1791,7 @@ private fun TopSpatialHeader(
                 }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "At your service, sir. Black, Grey & White Glass + Tri-Chroma Orb Online.",
+                    text = "At your service, sir. Study Library, 3D Live Orb & Tri-Accent Glass Ready.",
                     color = palette.textPrimary,
                     fontSize = 19.sp,
                     fontWeight = FontWeight.Bold
@@ -2612,14 +2638,12 @@ fun LivingAuroraBackground(
         val w = size.width
         val h = size.height
 
-        // Deep Obsidian Black & Slate Grey Architectural Canvas
         drawRect(
             brush = Brush.verticalGradient(
                 colors = listOf(palette.deepCanvasTop, palette.deepCanvasBottom)
             )
         )
 
-        // Subtle Alabaster White + Emerald, Solar Amber & Crimson Ambient Light Mist
         val glowAlpha = (lab.auroraGlowIntensity * 0.24f * voiceBoost).coerceIn(0.04f, 0.50f)
         val richness = lab.colorRichness.coerceIn(0.2f, 1f)
 
@@ -2701,7 +2725,6 @@ fun LiquidGlassCard(
     val baseSurface = palette.glassSurface.copy(alpha = effectiveAlpha)
     val primaryRim = accentTint ?: palette.accentPrimary
 
-    // Sleek White/Grey Specular Rim with subtle Emerald, Amber & Crimson micro-edge reflection
     val rimBrush = Brush.linearGradient(
         colors = if (lab.highContrastMode) {
             listOf(Color.White, primaryRim, Color.White)
@@ -3014,7 +3037,6 @@ fun ArcReactorVoiceOrb(
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             val r = min(size.width, size.height) / 2f
-            // 3D Obsidian Sphere Base with Emerald, Solar Amber & Crimson Corona
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
@@ -3044,7 +3066,6 @@ fun ArcReactorVoiceOrb(
                 ),
                 radius = r * 0.62f
             )
-            // Tri-Chroma + White Specular Ring
             drawCircle(
                 brush = Brush.sweepGradient(
                     colors = listOf(
