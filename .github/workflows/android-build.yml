@@ -23,16 +23,19 @@ jobs:
           set -e
           git clone --depth 1 --branch "${GITHUB_REF_NAME}" "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" .
 
+          rm -rf app/src/main/java/com/jarvis/neet2027/ui
+          rm -rf app/src/main/java/com/jarvis/neet2027/security
+          rm -rf app/src/main/java/com/jarvis/neet2027/util
+          find . -name "FILE:*" -exec rm -rf {} + || true
+
           export JAVA_HOME="${JAVA_HOME_17_X64:-/usr/lib/jvm/temurin-17-jdk-amd64}"
           export PATH="${JAVA_HOME}/bin:${PATH}"
-          java -version
 
           if [ ! -d "/tmp/gradle-8.10.2" ]; then
             curl -sL https://services.gradle.org/distributions/gradle-8.10.2-bin.zip -o /tmp/gradle.zip
             unzip -q /tmp/gradle.zip -d /tmp
           fi
           export PATH="/tmp/gradle-8.10.2/bin:${PATH}"
-          gradle -v
 
           rm -f /tmp/jarvis-release.jks
           if [ -n "$SIGNING_KEYSTORE_BASE64" ]; then
@@ -54,14 +57,9 @@ jobs:
               -storepass "$STORE_PASS" \
               -keypass "$KEY_PASS" \
               -dname "CN=JarvisNEET2027, OU=Study, O=AIIMSNagpur, L=ImphalEast, ST=Manipur, C=IN"
-            echo "=================================================================="
-            echo "COPY THIS BASE64 LINE INTO REPO SECRET 'SIGNING_KEYSTORE_BASE64':"
-            base64 -w 0 /tmp/jarvis-release.jks
-            echo ""
-            echo "=================================================================="
           fi
 
-          gradle assembleRelease --stacktrace --no-daemon
+          gradle assembleRelease --no-daemon
 
           cp app/build/outputs/apk/release/app-release.apk Jarvis-NEET2027.apk
 
