@@ -260,20 +260,38 @@ data class JarvisPalettePreset(
 )
 
 object JarvisSpatialPalettes {
-    // 1. NEW DEFAULT: Aesthetic Black, Grey & White Monochrome Liquid Glass
-    val MonochromeObsidianPro = JarvisPalettePreset(
-        id = "MONOCHROME_OBSIDIAN_PRO",
-        name = "Monochrome Black, Grey & White Glass",
-        subtitle = "Obsidian #09090B + Architectural Slate Grey + Pure Alabaster White",
-        deepCanvasTop = Color(0xFF141418),
-        deepCanvasBottom = Color(0xFF070709),
+    // 1. DEFAULT: Monochrome Black, Grey & White Liquid Glass with subtle Emerald, Amber & Crimson Accents
+    val MonochromeTriChromaPro = JarvisPalettePreset(
+        id = "MONOCHROME_TRICHROMA_PRO",
+        name = "Obsidian Black, Grey & White + Tri-Accent",
+        subtitle = "Black/Slate/White Liquid Glass + Subtle Emerald, Solar Amber & Crimson Sparks",
+        deepCanvasTop = Color(0xFF14151A),
+        deepCanvasBottom = Color(0xFF07070A),
+        orbPrimary = Color(0xFF10B981),   // Subtle Emerald Green glow
+        orbSecondary = Color(0xFFF59E0B), // Subtle Solar Amber-Yellow glow
+        orbTertiary = Color(0xFFF43F5E),  // Subtle Crimson Red glow
+        accentPrimary = Color(0xFF10B981),
+        accentSecondary = Color(0xFFF59E0B),
+        accentTertiary = Color(0xFFF43F5E),
+        glassSurface = Color(0xC416161A),
+        glassHighlight = Color(0x99FFFFFF),
+        textPrimary = Color(0xFFFAFAFA),
+        textSecondary = Color(0xFFE4E4E7)
+    )
+
+    val PureMonochromeStudio = JarvisPalettePreset(
+        id = "PURE_MONOCHROME_STUDIO",
+        name = "Pure Black, Grey & White Studio",
+        subtitle = "Minimalist Obsidian #09090B + Architectural Grey + Alabaster White",
+        deepCanvasTop = Color(0xFF161618),
+        deepCanvasBottom = Color(0xFF060608),
         orbPrimary = Color(0xFFFFFFFF),
         orbSecondary = Color(0xFFA1A1AA),
         orbTertiary = Color(0xFF52525B),
         accentPrimary = Color(0xFFF4F4F5),
-        accentSecondary = Color(0xFFA1A1AA),
-        accentTertiary = Color(0xFFE4E4E7),
-        glassSurface = Color(0xB818181B),
+        accentSecondary = Color(0xFFD4D4D8),
+        accentTertiary = Color(0xFFA1A1AA),
+        glassSurface = Color(0xBF18181B),
         glassHighlight = Color(0x88FFFFFF),
         textPrimary = Color(0xFFFAFAFA),
         textSecondary = Color(0xFFD4D4D8)
@@ -297,66 +315,29 @@ object JarvisSpatialPalettes {
         textSecondary = Color(0xFFBAE6FD)
     )
 
-    val VisionOsTitanium = JarvisPalettePreset(
-        id = "VISION_OS_TITANIUM",
-        name = "Apple visionOS Spatial Glass",
-        subtitle = "Frosted Pearlescent Titanium + Warm Indigo & Sky Glow",
-        deepCanvasTop = Color(0xFF0F1322),
-        deepCanvasBottom = Color(0xFF060811),
-        orbPrimary = Color(0xFF60A5FA),
-        orbSecondary = Color(0xFFC084FC),
-        orbTertiary = Color(0xFF34D399),
-        accentPrimary = Color(0xFF93C5FD),
-        accentSecondary = Color(0xFFD8B4FE),
-        accentTertiary = Color(0xFF6EE7B7),
-        glassSurface = Color(0xB31E293B),
-        glassHighlight = Color(0x80FFFFFF),
-        textPrimary = Color(0xFFFFFFFF),
-        textSecondary = Color(0xFFCBD5E1)
-    )
-
     val CyberpunkNebula = JarvisPalettePreset(
         id = "CYBERPUNK_NEBULA",
-        name = "Stark Holo-Nebula",
-        subtitle = "Arc-Reactor Cyan + Sunset Gold + Neon Violet",
-        deepCanvasTop = Color(0xFF090D1E),
-        deepCanvasBottom = Color(0xFF04050A),
-        orbPrimary = Color(0xFF06B6D4),
-        orbSecondary = Color(0xFFF59E0B),
-        orbTertiary = Color(0xFF8B5CF6),
-        accentPrimary = Color(0xFF22D3EE),
-        accentSecondary = Color(0xFFFBBF24),
-        accentTertiary = Color(0xFFC084FC),
-        glassSurface = Color(0xAA111827),
-        glassHighlight = Color(0x66E0F2FE),
-        textPrimary = Color(0xFFF9FAFB),
-        textSecondary = Color(0xFFA5F3FC)
-    )
-
-    val EmeraldMatrixPro = JarvisPalettePreset(
-        id = "EMERALD_PRO",
-        name = "Emerald Mint & Jade Studio",
-        subtitle = "Refined Emerald #10B981 + Cyber Cyan + Deep Jade",
-        deepCanvasTop = Color(0xFF061A17),
-        deepCanvasBottom = Color(0xFF020908),
-        orbPrimary = Color(0xFF10B981),
-        orbSecondary = Color(0xFF06B6D4),
-        orbTertiary = Color(0xFF3B82F6),
-        accentPrimary = Color(0xFF34D399),
-        accentSecondary = Color(0xFF22D3EE),
-        accentTertiary = Color(0xFF60A5FA),
-        glassSurface = Color(0xAA08221E),
-        glassHighlight = Color(0x66A7F3D0),
-        textPrimary = Color(0xFFECFDF5),
-        textSecondary = Color(0xFF6EE7B7)
+        name = "Stark Gold, Crimson & Emerald",
+        subtitle = "Hologram Gold #F59E0B + Hot Rod Red #F43F5E + Emerald #10B981",
+        deepCanvasTop = Color(0xFF121016),
+        deepCanvasBottom = Color(0xFF060508),
+        orbPrimary = Color(0xFFF59E0B),
+        orbSecondary = Color(0xFFF43F5E),
+        orbTertiary = Color(0xFF10B981),
+        accentPrimary = Color(0xFFFBBF24),
+        accentSecondary = Color(0xFFFB7185),
+        accentTertiary = Color(0xFF34D399),
+        glassSurface = Color(0xB818141C),
+        glassHighlight = Color(0x77FEF3C7),
+        textPrimary = Color(0xFFFAFAFA),
+        textSecondary = Color(0xFFFDE68A)
     )
 
     val allPresets = listOf(
-        MonochromeObsidianPro,
+        MonochromeTriChromaPro,
+        PureMonochromeStudio,
         SiriAuroraPro,
-        VisionOsTitanium,
-        CyberpunkNebula,
-        EmeraldMatrixPro
+        CyberpunkNebula
     )
 
     val StatusSuccess = Color(0xFF10B981)
@@ -368,13 +349,13 @@ object JarvisSpatialPalettes {
 class GlassLabController {
     var activePresetIndex by mutableIntStateOf(0)
     var blurRadiusDp by mutableFloatStateOf(24f)
-    var surfaceAlpha by mutableFloatStateOf(0.72f)
-    var specularGloss by mutableFloatStateOf(0.62f)
-    var auroraGlowIntensity by mutableFloatStateOf(0.70f)
-    var bevelDepth by mutableFloatStateOf(0.65f)
+    var surfaceAlpha by mutableFloatStateOf(0.76f)
+    var specularGloss by mutableFloatStateOf(0.68f)
+    var auroraGlowIntensity by mutableFloatStateOf(0.55f)
+    var bevelDepth by mutableFloatStateOf(0.68f)
     var cornerRadiusDp by mutableFloatStateOf(24f)
     var gyroParallaxStrength by mutableFloatStateOf(0.70f)
-    var colorRichness by mutableFloatStateOf(0.85f)
+    var colorRichness by mutableFloatStateOf(0.75f)
 
     var performance144HzMode by mutableStateOf(false)
     var reduceTransparency by mutableStateOf(false)
@@ -386,13 +367,13 @@ class GlassLabController {
     fun applyAppleProDefault() {
         activePresetIndex = 0
         blurRadiusDp = 24f
-        surfaceAlpha = 0.72f
-        specularGloss = 0.62f
-        auroraGlowIntensity = 0.70f
-        bevelDepth = 0.65f
+        surfaceAlpha = 0.76f
+        specularGloss = 0.68f
+        auroraGlowIntensity = 0.55f
+        bevelDepth = 0.68f
         cornerRadiusDp = 24f
         gyroParallaxStrength = 0.70f
-        colorRichness = 0.85f
+        colorRichness = 0.75f
         performance144HzMode = false
         reduceTransparency = false
         highContrastMode = false
@@ -605,7 +586,6 @@ object JarvisBrainEngine {
             val allRawModels = mutableListOf<DiscoveredModelInfo>()
             var pageToken: String? = null
 
-            // Fetch all pages (pageSize=100) so no model is ever hidden
             do {
                 val urlStr = buildString {
                     append("https://generativelanguage.googleapis.com/v1beta/models?pageSize=100&key=")
@@ -649,7 +629,6 @@ object JarvisBrainEngine {
                 pageToken = root["nextPageToken"]?.jsonPrimitive?.content
             } while (!pageToken.isNullOrBlank())
 
-            // Ensure flagship 3.8 Flash & 3.5 Flash-Lite presets are always selectable at the top
             val pinnedPresets = listOf(
                 DiscoveredModelInfo(
                     id = "gemini-3.8-flash",
@@ -889,9 +868,9 @@ fun JarvisChapterFourApp() {
                     ChatMessageItem(
                         id = 1L,
                         role = "jarvis",
-                        visibleText = "Good evening, sir. Your Monochrome Black, Grey & White Liquid Glass UI and 3D Black Particle-Reactive Live Orb are online.",
+                        visibleText = "Good evening, sir. Your Obsidian Black, Grey & White Liquid Glass UI with Emerald, Solar Amber & Crimson accents is online.",
                         emotionTag = "calm",
-                        engineBadge = "MONOCHROME PRO",
+                        engineBadge = "TRI-CHROMA PRO",
                         timestampIst = "ONLINE"
                     )
                 )
@@ -1044,7 +1023,7 @@ fun JarvisChapterFourApp() {
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "J.A.R.V.I.S. // MONOCHROME LIQUID GLASS & 3D PARTICLE ORB",
+                        text = "J.A.R.V.I.S. // MONOCHROME + TRI-CHROMA LIQUID GLASS",
                         color = palette.accentPrimary,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
@@ -1052,7 +1031,7 @@ fun JarvisChapterFourApp() {
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Initialising 3D Black Particle Core, Gemini 3.8/3.5 Scanner & Imphal IST... (Tap to skip)",
+                        text = "Initialising 3D Black & Tri-Chroma Particle Core + Imphal IST... (Tap to skip)",
                         color = palette.textSecondary,
                         fontSize = 13.sp
                     )
@@ -1104,7 +1083,7 @@ private fun JarvisGlassChatScreen(
                     Icon(
                         imageVector = if (privacyOff) Icons.Default.CloudOff else Icons.Default.CloudDone,
                         contentDescription = null,
-                        tint = if (privacyOff) JarvisSpatialPalettes.StatusSuccess else palette.accentPrimary
+                        tint = if (privacyOff) JarvisSpatialPalettes.StatusWarning else JarvisSpatialPalettes.StatusSuccess
                     )
                     Spacer(modifier = Modifier.width(10.dp))
                     Column {
@@ -1112,7 +1091,7 @@ private fun JarvisGlassChatScreen(
                             text = if (privacyOff) {
                                 "OFFLINE MODE ACTIVE // 0 BYTES LEAVE TABLET"
                             } else {
-                                "HYBRID CLOUD BRAIN // ${committedModelId.ifBlank { "gemini-3-flash-preview" }}"
+                                "HYBRID CLOUD BRAIN // ${committedModelId.ifBlank { "gemini-3.8-flash" }}"
                             },
                             color = palette.textPrimary,
                             fontFamily = FontFamily.Monospace,
@@ -1136,13 +1115,14 @@ private fun JarvisGlassChatScreen(
                         icon = if (privacyOff) Icons.Default.CloudOff else Icons.Default.CloudDone,
                         lab = lab,
                         isActive = !privacyOff,
-                        accentColor = if (privacyOff) JarvisSpatialPalettes.StatusWarning else JarvisSpatialPalettes.StatusInfo,
+                        accentColor = if (privacyOff) JarvisSpatialPalettes.StatusWarning else JarvisSpatialPalettes.StatusSuccess,
                         onClick = onToggleOffline
                     )
                     LiquidGlassButton(
                         text = "Regenerate",
                         icon = Icons.Default.Refresh,
                         lab = lab,
+                        accentColor = JarvisSpatialPalettes.StatusWarning,
                         onClick = {
                             val lastUser = messages.lastOrNull { it.role == "user" }?.visibleText
                             if (lastUser != null && !isStreaming) {
@@ -1186,24 +1166,30 @@ private fun JarvisGlassChatScreen(
                         LiquidGlassButton(
                             text = "Clear",
                             lab = lab,
+                            accentColor = JarvisSpatialPalettes.StatusError,
                             onClick = { searchFilter = "" }
                         )
                     }
                 }
             )
             Spacer(modifier = Modifier.height(10.dp))
+            val chipAccents = listOf(
+                JarvisSpatialPalettes.StatusSuccess,
+                JarvisSpatialPalettes.StatusWarning,
+                JarvisSpatialPalettes.StatusError
+            )
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                suggestionChips.forEach { chip ->
+                suggestionChips.forEachIndexed { idx, chip ->
                     LiquidGlassButton(
                         text = chip,
                         icon = Icons.Default.AutoAwesome,
                         lab = lab,
-                        accentColor = palette.accentSecondary,
+                        accentColor = chipAccents[idx % chipAccents.size],
                         onClick = { userDraft = chip }
                     )
                 }
@@ -1232,6 +1218,7 @@ private fun JarvisGlassChatScreen(
                     text = "Edit Last Prompt",
                     icon = Icons.Default.Edit,
                     lab = lab,
+                    accentColor = JarvisSpatialPalettes.StatusWarning,
                     onClick = {
                         val lastUser = messages.lastOrNull { it.role == "user" }
                         if (lastUser != null) {
@@ -1245,7 +1232,7 @@ private fun JarvisGlassChatScreen(
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 visibleMessages.forEach { msg ->
                     val isUser = msg.role == "user"
-                    val bubbleAccent = if (isUser) palette.accentSecondary else palette.accentPrimary
+                    val bubbleAccent = if (isUser) JarvisSpatialPalettes.StatusWarning else JarvisSpatialPalettes.StatusSuccess
                     Box(
                         modifier = Modifier.fillMaxWidth(),
                         contentAlignment = if (isUser) Alignment.CenterEnd else Alignment.CenterStart
@@ -1258,13 +1245,13 @@ private fun JarvisGlassChatScreen(
                                     Brush.linearGradient(
                                         colors = if (isUser) {
                                             listOf(
-                                                palette.accentSecondary.copy(alpha = 0.34f),
-                                                palette.accentTertiary.copy(alpha = 0.22f)
+                                                Color(0xFF27272A),
+                                                Color(0xFF18181B)
                                             )
                                         } else {
                                             listOf(
-                                                palette.accentPrimary.copy(alpha = 0.24f),
-                                                palette.glassSurface.copy(alpha = 0.85f)
+                                                Color(0xFF18181B),
+                                                Color(0xFF09090B)
                                             )
                                         }
                                     )
@@ -1273,8 +1260,9 @@ private fun JarvisGlassChatScreen(
                                     width = 1.2.dp,
                                     brush = Brush.linearGradient(
                                         colors = listOf(
-                                            Color.White.copy(alpha = 0.55f),
-                                            bubbleAccent.copy(alpha = 0.75f)
+                                            Color.White.copy(alpha = 0.65f),
+                                            bubbleAccent.copy(alpha = 0.80f),
+                                            Color(0xFF52525B)
                                         )
                                     ),
                                     shape = RoundedCornerShape(22.dp)
@@ -1316,7 +1304,7 @@ private fun JarvisGlassChatScreen(
                 if (isStreaming) {
                     Text(
                         text = "J.A.R.V.I.S. is consulting your NEET 2027 timetable & NCERT brain...",
-                        color = palette.accentPrimary,
+                        color = JarvisSpatialPalettes.StatusWarning,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 12.sp
                     )
@@ -1335,7 +1323,7 @@ private fun JarvisGlassChatScreen(
                     text = if (isStreaming) "Thinking..." else "Ask Jarvis",
                     icon = Icons.Default.Send,
                     lab = lab,
-                    accentColor = palette.accentPrimary,
+                    accentColor = JarvisSpatialPalettes.StatusSuccess,
                     onClick = {
                         val cleanPrompt = userDraft.trim()
                         if (cleanPrompt.isNotEmpty() && !isStreaming) {
@@ -1437,7 +1425,7 @@ private fun BrainRouterAndScannerScreen(
                     text = if (isScanning) "Scanning All Pages..." else "1. Scan My Gemini Key",
                     icon = Icons.Default.Search,
                     lab = lab,
-                    accentColor = palette.accentPrimary,
+                    accentColor = JarvisSpatialPalettes.StatusSuccess,
                     onClick = {
                         if (!isScanning) {
                             isScanning = true
@@ -1464,6 +1452,7 @@ private fun BrainRouterAndScannerScreen(
                     icon = if (forceOffline) Icons.Default.CloudOff else Icons.Default.CloudDone,
                     lab = lab,
                     isActive = !forceOffline,
+                    accentColor = if (forceOffline) JarvisSpatialPalettes.StatusError else JarvisSpatialPalettes.StatusWarning,
                     onClick = onToggleOffline
                 )
             }
@@ -1478,6 +1467,7 @@ private fun BrainRouterAndScannerScreen(
                     LiquidGlassButton(
                         text = "Stage ID",
                         lab = lab,
+                        accentColor = JarvisSpatialPalettes.StatusWarning,
                         onClick = {
                             if (customModelInput.isNotBlank()) {
                                 stagedModelId = customModelInput.trim()
@@ -1507,12 +1497,12 @@ private fun BrainRouterAndScannerScreen(
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(16.dp))
                                 .background(
-                                    if (isSelected) palette.accentPrimary.copy(alpha = 0.28f)
+                                    if (isSelected) JarvisSpatialPalettes.StatusSuccess.copy(alpha = 0.22f)
                                     else palette.glassSurface.copy(alpha = 0.55f)
                                 )
                                 .border(
                                     width = if (isSelected) 1.5.dp else 1.dp,
-                                    color = if (isSelected) Color.White else palette.accentPrimary.copy(alpha = 0.35f),
+                                    color = if (isSelected) JarvisSpatialPalettes.StatusSuccess else Color.White.copy(alpha = 0.25f),
                                     shape = RoundedCornerShape(16.dp)
                                 )
                                 .clickable { stagedModelId = model.id }
@@ -1567,7 +1557,7 @@ private fun BrainRouterAndScannerScreen(
                 label = "Brain Creativity / Temperature (${"%.2f".format(stagedTemp)})",
                 value = stagedTemp,
                 range = 0.0f..1.0f,
-                tint = palette.accentPrimary
+                tint = JarvisSpatialPalettes.StatusWarning
             ) { stagedTemp = it }
             Spacer(modifier = Modifier.height(6.dp))
             Text(
@@ -1623,14 +1613,15 @@ private fun SpatialNavigationRail(
             .width(108.dp)
             .fillMaxHeight()
             .clip(shape)
-            .background(palette.glassSurface.copy(alpha = 0.78f))
+            .background(palette.glassSurface.copy(alpha = 0.85f))
             .border(
                 width = 1.2.dp,
                 brush = Brush.verticalGradient(
                     colors = listOf(
-                        Color.White.copy(alpha = 0.55f),
-                        palette.accentPrimary.copy(alpha = 0.65f),
-                        palette.accentSecondary.copy(alpha = 0.55f)
+                        Color.White.copy(alpha = 0.65f),
+                        JarvisSpatialPalettes.StatusSuccess.copy(alpha = 0.55f),
+                        JarvisSpatialPalettes.StatusWarning.copy(alpha = 0.55f),
+                        JarvisSpatialPalettes.StatusError.copy(alpha = 0.55f)
                     )
                 ),
                 shape = shape
@@ -1649,7 +1640,7 @@ private fun SpatialNavigationRail(
             Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = orbState.name,
-                color = palette.accentPrimary,
+                color = JarvisSpatialPalettes.StatusWarning,
                 fontFamily = FontFamily.Monospace,
                 fontSize = 9.sp,
                 fontWeight = FontWeight.Bold
@@ -1664,8 +1655,14 @@ private fun SpatialNavigationRail(
             verticalArrangement = Arrangement.spacedBy(5.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            JarvisNavTab.values().forEach { tab ->
+            val tabAccents = listOf(
+                JarvisSpatialPalettes.StatusSuccess,
+                JarvisSpatialPalettes.StatusWarning,
+                JarvisSpatialPalettes.StatusError
+            )
+            JarvisNavTab.values().forEachIndexed { idx, tab ->
                 val active = selectedTab == tab
+                val tabColor = tabAccents[idx % tabAccents.size]
                 val itemShape = RoundedCornerShape(14.dp)
                 Column(
                     modifier = Modifier
@@ -1675,8 +1672,8 @@ private fun SpatialNavigationRail(
                             if (active) {
                                 Brush.linearGradient(
                                     colors = listOf(
-                                        palette.accentPrimary.copy(alpha = 0.34f),
-                                        palette.accentSecondary.copy(alpha = 0.24f)
+                                        Color(0xFF27272A),
+                                        tabColor.copy(alpha = 0.28f)
                                     )
                                 )
                             } else {
@@ -1685,7 +1682,7 @@ private fun SpatialNavigationRail(
                         )
                         .border(
                             width = if (active) 1.2.dp else 0.dp,
-                            color = if (active) Color.White.copy(alpha = 0.75f) else Color.Transparent,
+                            color = if (active) tabColor else Color.Transparent,
                             shape = itemShape
                         )
                         .clickable { onSelectTab(tab) }
@@ -1695,7 +1692,7 @@ private fun SpatialNavigationRail(
                     Icon(
                         imageVector = tab.icon,
                         contentDescription = tab.label,
-                        tint = if (active) Color.White else palette.textSecondary,
+                        tint = if (active) tabColor else palette.textSecondary,
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.height(2.dp))
@@ -1712,7 +1709,8 @@ private fun SpatialNavigationRail(
         Box(
             modifier = Modifier
                 .clip(RoundedCornerShape(12.dp))
-                .background(palette.accentTertiary.copy(alpha = 0.25f))
+                .background(Color(0xFF27272A))
+                .border(1.dp, JarvisSpatialPalettes.StatusWarning.copy(alpha = 0.7f), RoundedCornerShape(12.dp))
                 .clickable {
                     lab.activePresetIndex = (lab.activePresetIndex + 1) % JarvisSpatialPalettes.allPresets.size
                 }
@@ -1749,15 +1747,17 @@ private fun TopSpatialHeader(
         ) {
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(palette.orbPrimary))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(palette.orbSecondary))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(palette.orbTertiary))
+                    Box(modifier = Modifier.size(9.dp).clip(CircleShape).background(Color.White))
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Box(modifier = Modifier.size(9.dp).clip(CircleShape).background(JarvisSpatialPalettes.StatusSuccess))
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Box(modifier = Modifier.size(9.dp).clip(CircleShape).background(JarvisSpatialPalettes.StatusWarning))
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Box(modifier = Modifier.size(9.dp).clip(CircleShape).background(JarvisSpatialPalettes.StatusError))
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
                         text = "J.A.R.V.I.S. // ${palette.name.uppercase()} • ${if (forceOffline) "OFFLINE" else committedModelId.ifBlank { "GEMINI 3.8 READY" }}",
-                        color = palette.accentPrimary,
+                        color = JarvisSpatialPalettes.StatusWarning,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp
@@ -1765,7 +1765,7 @@ private fun TopSpatialHeader(
                 }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "At your service, sir. 3D Black Particle Live Orb & Monochrome Glass Ready.",
+                    text = "At your service, sir. Black, Grey & White Glass + Tri-Chroma Orb Online.",
                     color = palette.textPrimary,
                     fontSize = 19.sp,
                     fontWeight = FontWeight.Bold
@@ -1786,7 +1786,7 @@ private fun TopSpatialHeader(
                 )
                 Text(
                     text = "$daysToNeet DAYS TO NEET UG 2027",
-                    color = palette.accentSecondary,
+                    color = JarvisSpatialPalettes.StatusSuccess,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
                     fontSize = 12.sp
@@ -1830,15 +1830,15 @@ private fun DashboardSpatialContent(
             LiquidGlassCard(
                 lab = lab,
                 tilt = tilt,
-                accentTint = palette.accentPrimary,
+                accentTint = JarvisSpatialPalettes.StatusSuccess,
                 modifier = Modifier.weight(1f)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Schedule, contentDescription = null, tint = palette.accentPrimary)
+                    Icon(Icons.Default.Schedule, contentDescription = null, tint = JarvisSpatialPalettes.StatusSuccess)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = "LIVE IMPHAL TIMETABLE SLOT (${activeSlot.startTime} - ${activeSlot.endTime})",
-                        color = palette.accentPrimary,
+                        color = JarvisSpatialPalettes.StatusSuccess,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold
@@ -1853,15 +1853,15 @@ private fun DashboardSpatialContent(
             LiquidGlassCard(
                 lab = lab,
                 tilt = tilt,
-                accentTint = palette.accentSecondary,
+                accentTint = JarvisSpatialPalettes.StatusWarning,
                 modifier = Modifier.weight(1f)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Memory, contentDescription = null, tint = palette.accentSecondary)
+                    Icon(Icons.Default.Memory, contentDescription = null, tint = JarvisSpatialPalettes.StatusWarning)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = "NEET 2027 BRAIN TELEMETRY",
-                        color = palette.accentSecondary,
+                        color = JarvisSpatialPalettes.StatusWarning,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold
@@ -1881,27 +1881,27 @@ private fun DashboardSpatialContent(
                 )
                 Text(
                     text = "Master Prompt Loaded: ${masterPrompt.length} chars",
-                    color = palette.accentTertiary,
+                    color = JarvisSpatialPalettes.StatusError,
                     fontFamily = FontFamily.Monospace,
                     fontSize = 12.sp
                 )
             }
         }
 
-        LiquidGlassCard(lab = lab, tilt = tilt, accentTint = palette.accentTertiary) {
+        LiquidGlassCard(lab = lab, tilt = tilt, accentTint = JarvisSpatialPalettes.StatusError) {
             Text(
                 text = "DAY 1 FOUR-TRACK QUEUE (MONDAY, 2 NOV 2026)",
-                color = palette.accentPrimary,
+                color = JarvisSpatialPalettes.StatusWarning,
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold,
                 fontSize = 13.sp
             )
             Spacer(modifier = Modifier.height(12.dp))
             val trackAccents = listOf(
-                palette.orbPrimary,
-                palette.orbSecondary,
-                palette.orbTertiary,
-                JarvisSpatialPalettes.StatusWarning
+                JarvisSpatialPalettes.StatusSuccess,
+                JarvisSpatialPalettes.StatusWarning,
+                JarvisSpatialPalettes.StatusError,
+                Color(0xFFFAFAFA)
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1916,8 +1916,9 @@ private fun DashboardSpatialContent(
                             .background(
                                 Brush.verticalGradient(
                                     colors = listOf(
-                                        accent.copy(alpha = 0.28f),
-                                        palette.glassSurface.copy(alpha = 0.65f)
+                                        Color(0xFF27272A),
+                                        accent.copy(alpha = 0.16f),
+                                        Color(0xFF09090B)
                                     )
                                 )
                             )
@@ -1953,11 +1954,11 @@ private fun DashboardSpatialContent(
 
         LiquidGlassCard(lab = lab, tilt = tilt) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Security, contentDescription = null, tint = palette.accentPrimary)
+                Icon(Icons.Default.Security, contentDescription = null, tint = JarvisSpatialPalettes.StatusSuccess)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = "XIAOMI PAD 6 HYPEROS SURVIVAL CONSOLE",
-                    color = palette.accentPrimary,
+                    color = JarvisSpatialPalettes.StatusSuccess,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
                     fontSize = 13.sp
@@ -2045,23 +2046,24 @@ private fun GlassLabScreen(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "APPLE VISION-OS // LIQUID GLASS LAB",
-                        color = palette.accentPrimary,
+                        color = JarvisSpatialPalettes.StatusWarning,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.sp
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Switch between Monochrome Black/Grey/White Glass and Multi-Colour Aurora themes.",
+                        text = "Switch between Black/Grey/White + Tri-Accent Glass, Pure Monochrome, and Siri Aurora.",
                         color = palette.textSecondary,
                         fontSize = 13.sp
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     LiquidGlassButton(
-                        text = "Monochrome Default",
+                        text = "Tri-Accent Default",
                         icon = Icons.Default.Refresh,
                         lab = lab,
+                        accentColor = JarvisSpatialPalettes.StatusSuccess,
                         onClick = { lab.applyAppleProDefault() }
                     )
                     LiquidGlassButton(
@@ -2094,20 +2096,21 @@ private fun GlassLabScreen(
                     val selected = lab.activePresetIndex == index
                     Box(
                         modifier = Modifier
-                            .width(230.dp)
+                            .width(240.dp)
                             .clip(RoundedCornerShape(18.dp))
                             .background(
                                 Brush.linearGradient(
                                     colors = listOf(
-                                        preset.orbPrimary.copy(alpha = 0.38f),
-                                        preset.orbSecondary.copy(alpha = 0.32f),
-                                        preset.orbTertiary.copy(alpha = 0.28f)
+                                        Color(0xFF18181B),
+                                        preset.orbPrimary.copy(alpha = 0.30f),
+                                        preset.orbSecondary.copy(alpha = 0.25f),
+                                        preset.orbTertiary.copy(alpha = 0.25f)
                                     )
                                 )
                             )
                             .border(
                                 width = if (selected) 2.dp else 1.dp,
-                                color = if (selected) Color.White else Color.White.copy(alpha = 0.25f),
+                                color = if (selected) JarvisSpatialPalettes.StatusWarning else Color.White.copy(alpha = 0.25f),
                                 shape = RoundedCornerShape(18.dp)
                             )
                             .clickable { lab.activePresetIndex = index }
@@ -2144,22 +2147,22 @@ private fun GlassLabScreen(
             LiquidGlassCard(lab = lab, tilt = tilt, modifier = Modifier.weight(1f)) {
                 Text(
                     text = "OPTICS & SPECULAR SHADERS",
-                    color = palette.accentPrimary,
+                    color = JarvisSpatialPalettes.StatusSuccess,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
                     fontSize = 13.sp
                 )
                 Spacer(modifier = Modifier.height(10.dp))
-                GlassSliderRow("Backdrop Blur Radius (${lab.blurRadiusDp.toInt()} dp)", lab.blurRadiusDp, 0f..40f, palette.accentPrimary) {
+                GlassSliderRow("Backdrop Blur Radius (${lab.blurRadiusDp.toInt()} dp)", lab.blurRadiusDp, 0f..40f, JarvisSpatialPalettes.StatusSuccess) {
                     lab.blurRadiusDp = it
                 }
-                GlassSliderRow("Glass Frosted Opacity (${(lab.surfaceAlpha * 100).toInt()}%)", lab.surfaceAlpha, 0.35f..0.95f, palette.accentSecondary) {
+                GlassSliderRow("Glass Frosted Opacity (${(lab.surfaceAlpha * 100).toInt()}%)", lab.surfaceAlpha, 0.35f..0.95f, JarvisSpatialPalettes.StatusWarning) {
                     lab.surfaceAlpha = it
                 }
-                GlassSliderRow("Top Specular Gloss (${(lab.specularGloss * 100).toInt()}%)", lab.specularGloss, 0.1f..1.0f, palette.accentTertiary) {
+                GlassSliderRow("Top Specular Gloss (${(lab.specularGloss * 100).toInt()}%)", lab.specularGloss, 0.1f..1.0f, JarvisSpatialPalettes.StatusError) {
                     lab.specularGloss = it
                 }
-                GlassSliderRow("Ambient Bloom Glow (${(lab.auroraGlowIntensity * 100).toInt()}%)", lab.auroraGlowIntensity, 0.1f..1.0f, palette.orbPrimary) {
+                GlassSliderRow("Tri-Accent Glow (${(lab.auroraGlowIntensity * 100).toInt()}%)", lab.auroraGlowIntensity, 0.1f..1.0f, JarvisSpatialPalettes.StatusSuccess) {
                     lab.auroraGlowIntensity = it
                 }
             }
@@ -2167,22 +2170,22 @@ private fun GlassLabScreen(
             LiquidGlassCard(lab = lab, tilt = tilt, modifier = Modifier.weight(1f)) {
                 Text(
                     text = "3D DEPTH & ACCESSIBILITY",
-                    color = palette.accentSecondary,
+                    color = JarvisSpatialPalettes.StatusWarning,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
                     fontSize = 13.sp
                 )
                 Spacer(modifier = Modifier.height(10.dp))
-                GlassSliderRow("3D Bevel Depth (${(lab.bevelDepth * 100).toInt()}%)", lab.bevelDepth, 0.1f..1.0f, palette.accentPrimary) {
+                GlassSliderRow("3D Bevel Depth (${(lab.bevelDepth * 100).toInt()}%)", lab.bevelDepth, 0.1f..1.0f, JarvisSpatialPalettes.StatusSuccess) {
                     lab.bevelDepth = it
                 }
-                GlassSliderRow("Corner Curvature (${lab.cornerRadiusDp.toInt()} dp)", lab.cornerRadiusDp, 12f..36f, palette.accentSecondary) {
+                GlassSliderRow("Corner Curvature (${lab.cornerRadiusDp.toInt()} dp)", lab.cornerRadiusDp, 12f..36f, JarvisSpatialPalettes.StatusWarning) {
                     lab.cornerRadiusDp = it
                 }
-                GlassSliderRow("Gyroscope 3D Tilt (${(lab.gyroParallaxStrength * 100).toInt()}%)", lab.gyroParallaxStrength, 0f..1.0f, palette.accentTertiary) {
+                GlassSliderRow("Gyroscope 3D Tilt (${(lab.gyroParallaxStrength * 100).toInt()}%)", lab.gyroParallaxStrength, 0f..1.0f, JarvisSpatialPalettes.StatusError) {
                     lab.gyroParallaxStrength = it
                 }
-                GlassSliderRow("Contrast Richness (${(lab.colorRichness * 100).toInt()}%)", lab.colorRichness, 0.2f..1.0f, palette.orbSecondary) {
+                GlassSliderRow("Accent Richness (${(lab.colorRichness * 100).toInt()}%)", lab.colorRichness, 0.2f..1.0f, JarvisSpatialPalettes.StatusWarning) {
                     lab.colorRichness = it
                 }
                 Spacer(modifier = Modifier.height(8.dp))
@@ -2195,13 +2198,13 @@ private fun GlassLabScreen(
                     Switch(
                         checked = lab.performance144HzMode,
                         onCheckedChange = { lab.performance144HzMode = it },
-                        colors = SwitchDefaults.colors(checkedThumbColor = palette.accentPrimary)
+                        colors = SwitchDefaults.colors(checkedThumbColor = JarvisSpatialPalettes.StatusSuccess)
                     )
                     Text("Low Transp.", color = palette.textPrimary, fontSize = 12.sp)
                     Switch(
                         checked = lab.reduceTransparency,
                         onCheckedChange = { lab.reduceTransparency = it },
-                        colors = SwitchDefaults.colors(checkedThumbColor = palette.accentSecondary)
+                        colors = SwitchDefaults.colors(checkedThumbColor = JarvisSpatialPalettes.StatusWarning)
                     )
                 }
             }
@@ -2251,8 +2254,8 @@ private fun ComponentGalleryScreen(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "3D LIQUID GLASS BUTTON KIT & VOICE ORB PREVIEW",
-                        color = palette.accentPrimary,
+                        text = "BLACK, GREY & WHITE 3D GLASS + EMERALD / AMBER / CRIMSON KIT",
+                        color = JarvisSpatialPalettes.StatusWarning,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.sp
@@ -2266,24 +2269,24 @@ private fun ComponentGalleryScreen(
                     Spacer(modifier = Modifier.height(12.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         LiquidGlassButton(
-                            text = "Primary Glass",
+                            text = "Emerald Glass",
                             icon = Icons.Default.AutoAwesome,
                             lab = lab,
-                            accentColor = palette.accentPrimary,
+                            accentColor = JarvisSpatialPalettes.StatusSuccess,
                             onClick = onCycleOrbState
                         )
                         LiquidGlassButton(
-                            text = "Slate Accent",
+                            text = "Solar Amber",
                             icon = Icons.Default.Bolt,
                             lab = lab,
-                            accentColor = palette.accentSecondary,
+                            accentColor = JarvisSpatialPalettes.StatusWarning,
                             onClick = onCycleOrbState
                         )
                         LiquidGlassButton(
-                            text = "Alabaster Rim",
+                            text = "Crimson Edge",
                             icon = Icons.Default.Palette,
                             lab = lab,
-                            accentColor = palette.accentTertiary,
+                            accentColor = JarvisSpatialPalettes.StatusError,
                             onClick = onCycleOrbState
                         )
                         LiquidGlassButton(
@@ -2325,6 +2328,7 @@ private fun ComponentGalleryScreen(
                         text = "Send",
                         icon = Icons.Default.Send,
                         lab = lab,
+                        accentColor = JarvisSpatialPalettes.StatusSuccess,
                         onClick = { demoQuery = "" }
                     )
                 }
@@ -2392,11 +2396,11 @@ private fun EncryptedApiKeyVaultScreen(
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         LiquidGlassCard(lab = lab, tilt = tilt) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Shield, contentDescription = null, tint = palette.accentPrimary)
+                Icon(Icons.Default.Shield, contentDescription = null, tint = JarvisSpatialPalettes.StatusSuccess)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = "ANDROID HARDWARE KEYSTORE // AES-256-GCM SECRET VAULT",
-                    color = palette.accentPrimary,
+                    color = JarvisSpatialPalettes.StatusSuccess,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
                     fontSize = 13.sp
@@ -2512,7 +2516,7 @@ private fun KeyEntryCard(
     val palette = lab.currentPalette
     LiquidGlassCard(lab = lab, tilt = tilt) {
         Text(text = title, color = palette.textPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-        Text(text = subtitle, color = palette.accentPrimary, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+        Text(text = subtitle, color = JarvisSpatialPalettes.StatusWarning, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
         Spacer(modifier = Modifier.height(10.dp))
         LiquidGlassPillInput(
             value = value,
@@ -2608,13 +2612,15 @@ fun LivingAuroraBackground(
         val w = size.width
         val h = size.height
 
+        // Deep Obsidian Black & Slate Grey Architectural Canvas
         drawRect(
             brush = Brush.verticalGradient(
                 colors = listOf(palette.deepCanvasTop, palette.deepCanvasBottom)
             )
         )
 
-        val glowAlpha = (lab.auroraGlowIntensity * 0.36f * voiceBoost).coerceIn(0.05f, 0.72f)
+        // Subtle Alabaster White + Emerald, Solar Amber & Crimson Ambient Light Mist
+        val glowAlpha = (lab.auroraGlowIntensity * 0.24f * voiceBoost).coerceIn(0.04f, 0.50f)
         val richness = lab.colorRichness.coerceIn(0.2f, 1f)
 
         val orb1Center = Offset(
@@ -2625,9 +2631,9 @@ fun LivingAuroraBackground(
             brush = Brush.radialGradient(
                 colors = listOf(palette.orbPrimary.copy(alpha = glowAlpha), Color.Transparent),
                 center = orb1Center,
-                radius = w * 0.45f
+                radius = w * 0.42f
             ),
-            radius = w * 0.45f,
+            radius = w * 0.42f,
             center = orb1Center
         )
 
@@ -2639,9 +2645,9 @@ fun LivingAuroraBackground(
             brush = Brush.radialGradient(
                 colors = listOf(palette.orbSecondary.copy(alpha = glowAlpha * richness), Color.Transparent),
                 center = orb2Center,
-                radius = w * 0.42f
+                radius = w * 0.40f
             ),
-            radius = w * 0.42f,
+            radius = w * 0.40f,
             center = orb2Center
         )
 
@@ -2651,11 +2657,11 @@ fun LivingAuroraBackground(
         )
         drawCircle(
             brush = Brush.radialGradient(
-                colors = listOf(palette.orbTertiary.copy(alpha = glowAlpha * richness * 0.9f), Color.Transparent),
+                colors = listOf(palette.orbTertiary.copy(alpha = glowAlpha * richness * 0.85f), Color.Transparent),
                 center = orb3Center,
-                radius = w * 0.46f
+                radius = w * 0.44f
             ),
-            radius = w * 0.46f,
+            radius = w * 0.44f,
             center = orb3Center
         )
 
@@ -2695,15 +2701,16 @@ fun LiquidGlassCard(
     val baseSurface = palette.glassSurface.copy(alpha = effectiveAlpha)
     val primaryRim = accentTint ?: palette.accentPrimary
 
+    // Sleek White/Grey Specular Rim with subtle Emerald, Amber & Crimson micro-edge reflection
     val rimBrush = Brush.linearGradient(
         colors = if (lab.highContrastMode) {
             listOf(Color.White, primaryRim, Color.White)
         } else {
             listOf(
-                Color.White.copy(alpha = (0.52f * lab.specularGloss).coerceIn(0.15f, 0.88f)),
-                primaryRim.copy(alpha = 0.55f),
-                palette.accentSecondary.copy(alpha = 0.45f),
-                palette.accentTertiary.copy(alpha = 0.35f)
+                Color.White.copy(alpha = (0.62f * lab.specularGloss).coerceIn(0.20f, 0.90f)),
+                Color(0xFF71717A).copy(alpha = 0.55f),
+                primaryRim.copy(alpha = 0.48f),
+                palette.accentSecondary.copy(alpha = 0.35f)
             )
         }
     )
@@ -2714,8 +2721,8 @@ fun LiquidGlassCard(
             .shadow(
                 elevation = (14f * lab.bevelDepth).dp,
                 shape = shape,
-                ambientColor = primaryRim.copy(alpha = 0.30f),
-                spotColor = palette.accentSecondary.copy(alpha = 0.35f)
+                ambientColor = Color.Black,
+                spotColor = primaryRim.copy(alpha = 0.28f)
             )
             .clip(shape)
             .background(baseSurface)
@@ -2723,8 +2730,8 @@ fun LiquidGlassCard(
                 drawRect(
                     brush = Brush.verticalGradient(
                         colors = listOf(
-                            Color.White.copy(alpha = 0.16f * lab.specularGloss),
-                            primaryRim.copy(alpha = 0.06f * lab.auroraGlowIntensity),
+                            Color.White.copy(alpha = 0.14f * lab.specularGloss),
+                            Color(0xFF27272A).copy(alpha = 0.18f),
                             Color.Transparent
                         ),
                         startY = 0f,
@@ -2735,7 +2742,7 @@ fun LiquidGlassCard(
                 drawRoundRect(
                     brush = Brush.verticalGradient(
                         colors = listOf(
-                            Color.White.copy(alpha = 0.28f * lab.bevelDepth),
+                            Color.White.copy(alpha = 0.30f * lab.bevelDepth),
                             Color.Transparent
                         ),
                         startY = 0f,
@@ -2791,16 +2798,16 @@ fun LiquidGlassButton(
             .shadow(
                 elevation = if (isPressed) 4.dp else 10.dp,
                 shape = pillShape,
-                ambientColor = activeHue.copy(alpha = 0.35f),
-                spotColor = activeHue.copy(alpha = 0.45f)
+                ambientColor = Color.Black,
+                spotColor = activeHue.copy(alpha = 0.40f)
             )
             .clip(pillShape)
             .background(
                 Brush.linearGradient(
                     colors = listOf(
-                        activeHue.copy(alpha = if (isActive) 0.34f else 0.20f),
-                        palette.accentSecondary.copy(alpha = 0.16f),
-                        palette.glassSurface.copy(alpha = 0.80f)
+                        Color(0xFF27272A),
+                        activeHue.copy(alpha = if (isActive) 0.30f else 0.16f),
+                        Color(0xFF09090B)
                     )
                 )
             )
@@ -2808,7 +2815,7 @@ fun LiquidGlassButton(
                 drawRect(
                     brush = Brush.verticalGradient(
                         colors = listOf(
-                            Color.White.copy(alpha = 0.28f * lab.specularGloss),
+                            Color.White.copy(alpha = 0.25f * lab.specularGloss),
                             Color.Transparent
                         ),
                         startY = 0f,
@@ -2822,7 +2829,7 @@ fun LiquidGlassButton(
                         brush = Brush.radialGradient(
                             colors = listOf(
                                 Color.White.copy(alpha = bloomAlpha),
-                                activeHue.copy(alpha = bloomAlpha * 0.7f),
+                                activeHue.copy(alpha = bloomAlpha * 0.75f),
                                 Color.Transparent
                             ),
                             center = bloomCenter,
@@ -2838,9 +2845,9 @@ fun LiquidGlassButton(
                 width = 1.2.dp,
                 brush = Brush.linearGradient(
                     colors = listOf(
-                        Color.White.copy(alpha = 0.65f * lab.specularGloss),
-                        activeHue.copy(alpha = 0.80f),
-                        palette.accentSecondary.copy(alpha = 0.50f)
+                        Color.White.copy(alpha = 0.70f * lab.specularGloss),
+                        activeHue.copy(alpha = 0.85f),
+                        Color(0xFF52525B)
                     )
                 ),
                 shape = pillShape
@@ -2868,7 +2875,7 @@ fun LiquidGlassButton(
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    tint = Color.White,
+                    tint = activeHue,
                     modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
@@ -2900,16 +2907,17 @@ fun LiquidGlassPillInput(
         modifier = modifier
             .fillMaxWidth()
             .defaultMinSize(minHeight = 54.dp)
-            .shadow(12.dp, shape, spotColor = palette.accentPrimary.copy(alpha = 0.30f))
+            .shadow(12.dp, shape, spotColor = JarvisSpatialPalettes.StatusWarning.copy(alpha = 0.25f))
             .clip(shape)
-            .background(palette.glassSurface.copy(alpha = 0.85f))
+            .background(Color(0xE6141418))
             .border(
                 width = 1.2.dp,
                 brush = Brush.linearGradient(
                     colors = listOf(
-                        Color.White.copy(alpha = 0.50f),
-                        palette.accentPrimary.copy(alpha = 0.65f),
-                        palette.accentSecondary.copy(alpha = 0.55f)
+                        Color.White.copy(alpha = 0.60f),
+                        JarvisSpatialPalettes.StatusSuccess.copy(alpha = 0.60f),
+                        JarvisSpatialPalettes.StatusWarning.copy(alpha = 0.60f),
+                        JarvisSpatialPalettes.StatusError.copy(alpha = 0.60f)
                     )
                 ),
                 shape = shape
@@ -2921,7 +2929,7 @@ fun LiquidGlassPillInput(
             Icon(
                 imageVector = leadingIcon,
                 contentDescription = null,
-                tint = palette.accentPrimary,
+                tint = JarvisSpatialPalettes.StatusWarning,
                 modifier = Modifier.size(20.dp)
             )
             Spacer(modifier = Modifier.width(12.dp))
@@ -2942,7 +2950,7 @@ fun LiquidGlassPillInput(
                     fontSize = 14.sp,
                     fontFamily = FontFamily.SansSerif
                 ),
-                cursorBrush = SolidColor(palette.accentPrimary),
+                cursorBrush = SolidColor(JarvisSpatialPalettes.StatusSuccess),
                 modifier = Modifier.fillMaxWidth()
             )
         }
@@ -2959,7 +2967,6 @@ fun ArcReactorVoiceOrb(
     modifier: Modifier = Modifier,
     sizeDp: Dp = 84.dp
 ) {
-    val palette = lab.currentPalette
     val infinite = rememberInfiniteTransition(label = "siri_orb")
     val pulse by infinite.animateFloat(
         initialValue = 0.92f,
@@ -3007,32 +3014,46 @@ fun ArcReactorVoiceOrb(
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             val r = min(size.width, size.height) / 2f
+            // 3D Obsidian Sphere Base with Emerald, Solar Amber & Crimson Corona
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        palette.orbPrimary.copy(alpha = 0.75f),
-                        palette.orbSecondary.copy(alpha = 0.55f),
-                        palette.orbTertiary.copy(alpha = 0.35f),
+                        Color(0xFF09090B),
+                        Color(0xFF18181B),
+                        JarvisSpatialPalettes.StatusWarning.copy(alpha = 0.55f),
+                        JarvisSpatialPalettes.StatusSuccess.copy(alpha = 0.35f),
                         Color.Transparent
                     )
                 ),
                 radius = r
             )
             val lobeOffset = Offset(
-                x = center.x + r * 0.25f * cos(spinAngle),
-                y = center.y + r * 0.25f * sin(spinAngle)
+                x = center.x + r * 0.24f * cos(spinAngle),
+                y = center.y + r * 0.24f * sin(spinAngle)
             )
             drawCircle(
                 brush = Brush.radialGradient(
-                    colors = listOf(Color.White.copy(alpha = 0.9f), palette.accentPrimary, Color.Transparent),
+                    colors = listOf(
+                        Color.White.copy(alpha = 0.85f),
+                        JarvisSpatialPalettes.StatusWarning.copy(alpha = 0.65f),
+                        JarvisSpatialPalettes.StatusError.copy(alpha = 0.45f),
+                        Color.Transparent
+                    ),
                     center = lobeOffset,
-                    radius = r * 0.65f
+                    radius = r * 0.62f
                 ),
-                radius = r * 0.65f
+                radius = r * 0.62f
             )
+            // Tri-Chroma + White Specular Ring
             drawCircle(
-                brush = Brush.linearGradient(
-                    colors = listOf(Color.White.copy(alpha = 0.85f), palette.accentPrimary, palette.accentSecondary)
+                brush = Brush.sweepGradient(
+                    colors = listOf(
+                        Color.White,
+                        JarvisSpatialPalettes.StatusSuccess,
+                        JarvisSpatialPalettes.StatusWarning,
+                        JarvisSpatialPalettes.StatusError,
+                        Color.White
+                    )
                 ),
                 radius = r * 0.86f,
                 style = Stroke(width = 2.dp.toPx())
