@@ -78,6 +78,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Palette
@@ -393,7 +394,8 @@ enum class VoiceOrbState {
 
 private enum class JarvisNavTab(val label: String, val icon: ImageVector) {
     LIVE_ORB("Live Orb", Icons.Default.GraphicEq),
-    STUDY_LIBRARY("Library", Icons.Default.Folder),
+    STUDY_LIBRARY("0.Neet 2027", Icons.Default.Folder),
+    VAULT_TOOLS("Vault", Icons.Default.Lock),
     NEET_COMMAND("NEET Hub", Icons.Default.Schedule),
     CALENDAR_PROGRESS("Calendar", Icons.Default.DateRange),
     JARVIS_CHAT("Jarvis AI", Icons.Default.Chat),
@@ -686,27 +688,38 @@ object JarvisBrainEngine {
             todayLectures.joinToString(" | ") { "${it.trackId}: ${it.chapterTitle} (L${it.lectureNumberInChapter}/${it.totalLecturesInChapter})" }
         }
 
-        // Search Study Library for matching notes so Jarvis can cite file + page
+        // 1. Check Autonomous Tool Router first (saves mistakes/notes, sets alarms, schedules events, or requests delete confirmation)
+        val toolOutcome = JarvisAutonomousToolRouter.evaluateAndRunAutonomousTools(context, plan, userQuery)
+        val toolPrefix = if (toolOutcome.toolSummaryBanner.isNotBlank()) "${toolOutcome.toolSummaryBanner}\n\n" else ""
+
+        // 2. Query Permanent PDF Memory Bank from `0.Neet 2027` without re-reading PDFs
         val rootFolder = StudyLibraryManager.getDedicatedRootFolder(context)
-        val indexedFiles = StudyLibraryManager.indexAllStudyFiles(rootFolder, plan)
-        val matchedLibraryNote = indexedFiles.firstOrNull { file ->
-            val keywords = userQuery.lowercase().split(" ").filter { it.length >= 4 && it !in listOf("jarvis", "find", "notes", "open", "explain", "what") }
-            keywords.any { kw -> file.name.contains(kw, ignoreCase = true) || file.extractedSnippet.contains(kw, ignoreCase = true) }
+        StudyLibraryManager.ensurePermanentMemoriesLoaded(context, rootFolder)
+        val allMemories = StudyLibraryManager.getAllPermanentMemories()
+        val keywords = userQuery.lowercase().split(" ").filter {
+            it.length >= 4 && it !in listOf("jarvis", "find", "notes", "open", "explain", "what", "from")
         }
-        val libraryCitationBlock = if (matchedLibraryNote != null) {
-            "\nMATCHED STUDY LIBRARY FILE (${matchedLibraryNote.relativePath}):\n${matchedLibraryNote.extractedSnippet.take(1200)}"
+        val matchedMemory = allMemories.firstOrNull { mem ->
+            keywords.any { kw ->
+                mem.fileName.contains(kw, ignoreCase = true) ||
+                    mem.matchedChapter.contains(kw, ignoreCase = true) ||
+                    mem.extractedMemoryText.contains(kw, ignoreCase = true)
+            }
+        }
+        val memoryContextBlock = if (matchedMemory != null) {
+            "\nPERMANENT PDF MEMORY FROM 0.Neet 2027 (${matchedMemory.relativePath}):\n${matchedMemory.extractedMemoryText.take(1400)}"
         } else ""
 
         val apiKey = EncryptedKeyStoreVault.readSecret(context, EncryptedKeyStoreVault.KEY_GEMINI_API)
         val privacyLock = EncryptedKeyStoreVault.isOfflinePrivacyLockEnabled(context)
 
         if (forceOffline || privacyLock || apiKey.isBlank()) {
-            val offlineText = buildOfflinePlanReply(plan, activeSlot.title, activeSlot.instruction, lecturesSummary, userQuery, matchedLibraryNote)
+            val offlineText = buildOfflinePlanReply(plan, activeSlot.title, activeSlot.instruction, lecturesSummary, userQuery, matchedMemory)
             val (emotion, cleaned) = parseEmotionAndCleanText(offlineText)
             return@withContext ChatMessageItem(
                 id = System.currentTimeMillis(),
                 role = "jarvis",
-                visibleText = formatScientificNotation(cleaned),
+                visibleText = formatScientificNotation(toolPrefix + cleaned),
                 emotionTag = emotion,
                 engineBadge = "OFFLINE BRAIN (0 BYTES SENT)",
                 timestampIst = timeStamp
@@ -728,7 +741,7 @@ object JarvisBrainEngine {
             - Local Time: $timeStamp (${nowIst.toLocalDate()})
             - Active Timetable Slot: ${activeSlot.title} (${activeSlot.startTime}-${activeSlot.endTime}) -> ${activeSlot.instruction}
             - Today's 4-Track Queue: $lecturesSummary
-            $libraryCitationBlock
+            $memoryContextBlock
         """.trimIndent()
 
         var lastError: Throwable? = null
@@ -794,7 +807,7 @@ object JarvisBrainEngine {
                 return@withContext ChatMessageItem(
                     id = System.currentTimeMillis(),
                     role = "jarvis",
-                    visibleText = formatScientificNotation(cleaned),
+                    visibleText = formatScientificNotation(toolPrefix + cleaned),
                     emotionTag = emotion,
                     engineBadge = "CLOUD // $candidateId",
                     timestampIst = timeStamp
@@ -804,12 +817,12 @@ object JarvisBrainEngine {
             }
         }
 
-        val offlineReply = buildOfflinePlanReply(plan, activeSlot.title, activeSlot.instruction, lecturesSummary, userQuery, matchedLibraryNote)
+        val offlineReply = buildOfflinePlanReply(plan, activeSlot.title, activeSlot.instruction, lecturesSummary, userQuery, matchedMemory)
         val (emotion, cleaned) = parseEmotionAndCleanText(offlineReply)
         return@withContext ChatMessageItem(
             id = System.currentTimeMillis(),
             role = "jarvis",
-            visibleText = formatScientificNotation("$cleaned\n\n(Auto-routed to Offline Brain: ${lastError?.message?.take(80)})"),
+            visibleText = formatScientificNotation("$toolPrefix$cleaned\n\n(Auto-routed to Offline Brain: ${lastError?.message?.take(80)})"),
             emotionTag = emotion,
             engineBadge = "AUTO-OFFLINE FALLBACK",
             timestampIst = timeStamp
@@ -822,27 +835,27 @@ object JarvisBrainEngine {
         slotInstruction: String,
         lecturesSummary: String,
         query: String,
-        matchedFile: IndexedStudyFile?
+        matchedMemory: PermanentPdfMemory?
     ): String {
         val q = query.lowercase()
-        if (matchedFile != null && (q.contains("find") || q.contains("note") || q.contains("rotational"))) {
-            return "[focused] Right away, sir. I located **${matchedFile.relativePath}** in your Study Library:\n${matchedFile.extractedSnippet.take(420)}"
+        if (matchedMemory != null && (q.contains("find") || q.contains("note") || q.contains("dpp") || q.contains("pdf"))) {
+            return "[focused] Right away, sir. From your permanent PDF memory bank in **0.Neet 2027/${matchedMemory.relativePath}**:\n${matchedMemory.extractedMemoryText.take(460)}"
         }
         return when {
             q.contains("what now") || q.contains("slot") || q.contains("timetable") || q.contains("schedule") ->
                 "[focused] Right then, sir, your Imphal IST timetable places us in **$slotTitle**. $slotInstruction Today's four tracks are: $lecturesSummary."
             q.contains("electric") || q.contains("charge") || q.contains("coulomb") || q.contains("gauss") ->
-                "[focused] In NCERT Class 12 Physics Chapter 1 (Electric Charges & Fields, cited from Notes/Electric_Charges_And_Fields_L01.md Page 1–3), Coulomb's law states F = (1 / 4πε₀) · (|q₁q₂| / r²), and Gauss's flux law is Φ = ∮ E · dA = q_enclosed / ε₀. Remember sir, for a dipole on the axial line E_axial = 2kp/r³, exactly double the equatorial magnitude E_eq = kp/r³."
+                "[focused] In NCERT Class 12 Physics Chapter 1 (Electric Charges & Fields), Coulomb's law states F = (1 / 4πε₀) · (|q₁q₂| / r²), and Gauss's flux law is Φ = ∮ E · dA = q_enclosed / ε₀. Remember sir, for a dipole on the axial line E_axial = 2kp/r³, exactly double the equatorial magnitude E_eq = kp/r³."
             q.contains("goc") || q.contains("inductive") || q.contains("hyperconjugation") || q.contains("resonance") ->
-                "[calm] Ah, General Organic Chemistry (cited from Notes/GOC_Organic_Basics_L01.md Page 1–2), sir—priority order for electronic effects in NCERT is **Aromaticity > Resonance (+M/-M) > Hyperconjugation (α-H count) > Inductive (+I/-I)**."
-            q.contains("biomolecule") || q.contains("enzyme") || q.contains("amino") ->
-                "[encouraging] For Zoology Biomolecules (NCERT Class 11 Chapter 9, cited from Notes/Biomolecules_Zoology_NCERT.md Page 1–2), keep the Michaelis constant K_m crisp in mind, sir: a lower K_m means higher enzyme-substrate affinity, and competitive inhibitors raise apparent K_m without changing V_max."
+                "[calm] Ah, General Organic Chemistry, sir—priority order for electronic effects in NCERT is **Aromaticity > Resonance (+M/-M) > Hyperconjugation (α-H count) > Inductive (+I/-I)**."
+            q.contains("biomolecule") || q.contains("enzyme") || q.contains("amino") || q.contains("carbohydrate") ->
+                "[encouraging] For Biomolecules (mapped in your 0.Neet 2027/Chemistry_360p/OC/Ch 09 Biomolecules & Zoology Biomolecules), keep the Michaelis constant K_m and carbohydrate glycosidic linkages crisp in mind, sir."
             q.contains("oscillation") || q.contains("shm") || q.contains("pendulum") ->
-                "[focused] In Track 4 Oscillations (cited from Notes/Oscillations_SHM_Track4.md Page 1–2), displacement x(t) = A sin(ωt + φ), velocity v = ω√(A² - x²), and total mechanical energy E = ½mω²A² stays constant while kinetic and potential energies oscillate at twice the frequency (2f), sir."
+                "[focused] In Track 4 Oscillations, displacement x(t) = A sin(ωt + φ), velocity v = ω√(A² - x²), and total mechanical energy E = ½mω²A² stays constant while kinetic and potential energies oscillate at twice the frequency (2f), sir."
             q.contains("tired") || q.contains("sleep") || q.contains("stressed") || q.contains("backlog") ->
-                "[concerned] Easy now, sir—our core rule forbids borrowing from your 02:00–10:00 sleep guardrail to repay a missed lecture. Let us execute the Bad-Day Minimum (one main lecture, 20 minutes closed-book recall, and a written 10-minute start for tomorrow) and take a 15-minute water break."
+                "[concerned] Easy now, sir—our core rule forbids borrowing from your 02:00–10:00 sleep guardrail to repay a missed lecture. Let us execute the Bad-Day Minimum (one main lecture, 20 minutes closed-book recall, and a written 10-minute start for tomorrow)."
             else ->
-                "[calm] Very good, sir. I am currently running on your local NEET 2027 Plan & Study Library Engine (0 bytes leaving your Xiaomi Pad 6). We are in **$slotTitle** ($slotInstruction), targeting ${plan.meta.goalInstitution} (Open AIR ≤ ${plan.meta.aiimsNagpurCutoffs2026Round1.ASPIRATIONAL_OPEN_BUFFER})."
+                "[calm] Very good, sir. I am running on your local NEET 2027 Plan & Permanent PDF Memory Engine (0 bytes leaving your Xiaomi Pad 6). We are in **$slotTitle** ($slotInstruction), targeting ${plan.meta.goalInstitution} (Open AIR ≤ ${plan.meta.aiimsNagpurCutoffs2026Round1.ASPIRATIONAL_OPEN_BUFFER})."
         }
     }
 }
@@ -851,23 +864,26 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        val shareBanner = JarvisVaultManager.handleSharedIncomingIntent(this, intent)
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
-                JarvisChapterFiveApp()
+                JarvisChapterSixApp(initialShareBanner = shareBanner)
             }
         }
     }
 }
 
 @Composable
-fun JarvisChapterFiveApp() {
+fun JarvisChapterSixApp(initialShareBanner: String? = null) {
     val context = LocalContext.current
     val plan = remember { NeetPlanRepository.loadPlan(context) }
     val masterPrompt = remember { NeetPlanRepository.loadMasterPrompt(context) }
     val lab = remember { GlassLabController() }
     val palette = lab.currentPalette
 
-    var selectedTab by remember { mutableStateOf(JarvisNavTab.STUDY_LIBRARY) }
+    var selectedTab by remember {
+        mutableStateOf(if (initialShareBanner != null) JarvisNavTab.VAULT_TOOLS else JarvisNavTab.STUDY_LIBRARY)
+    }
     var orbState by remember { mutableStateOf(VoiceOrbState.IDLE) }
     var showBootOverlay by remember { mutableStateOf(true) }
     var tick by remember { mutableIntStateOf(0) }
@@ -885,9 +901,9 @@ fun JarvisChapterFiveApp() {
                     ChatMessageItem(
                         id = 1L,
                         role = "jarvis",
-                        visibleText = "Good evening, sir. Chapter 5 Study Library is linked to /storage/emulated/0/JarvisNEET2027. Ask me 'Jarvis, find my rotational motion notes' or open the Library tab to view PDFs, notes, and chapter mappings.",
+                        visibleText = "Good morning, sir. Chapter 6 AES-256 Vault, Mistake Notebook, D0-D30 Flashcards, Autonomous Tool-Calling, and your '0.Neet 2027' Permanent PDF Memory are online.",
                         emotionTag = "calm",
-                        engineBadge = "STUDY LIBRARY READY",
+                        engineBadge = "VAULT & TOOLS READY",
                         timestampIst = "ONLINE"
                     )
                 )
@@ -970,6 +986,12 @@ fun JarvisChapterFiveApp() {
                         forceOffline = forceOfflineRouter,
                         tilt = tilt
                     )
+                    JarvisNavTab.VAULT_TOOLS -> EditableVaultAndToolsScreen(
+                        plan = plan,
+                        lab = lab,
+                        incomingShareBanner = initialShareBanner,
+                        tilt = tilt
+                    )
                     JarvisNavTab.NEET_COMMAND -> NeetCoreCommandScreen(
                         plan = plan,
                         lab = lab,
@@ -1049,7 +1071,7 @@ fun JarvisChapterFiveApp() {
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "J.A.R.V.I.S. // CHAPTER 5 STUDY LIBRARY ONLINE",
+                        text = "J.A.R.V.I.S. // CHAPTER 6 VAULT & AUTONOMOUS TOOLS ONLINE",
                         color = palette.accentPrimary,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
@@ -1057,7 +1079,7 @@ fun JarvisChapterFiveApp() {
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Mounting /storage/emulated/0/JarvisNEET2027 & Indexing Syllabus Files... (Tap to skip)",
+                        text = "Mounting 0.Neet 2027 Permanent PDF Memory & AES-256 Vault... (Tap to skip)",
                         color = palette.textSecondary,
                         fontSize = 13.sp
                     )
@@ -1090,11 +1112,11 @@ private fun JarvisGlassChatScreen(
     val privacyOff = EncryptedKeyStoreVault.isOfflinePrivacyLockEnabled(context) || forceOffline
 
     val suggestionChips = listOf(
-        "Jarvis, find my rotational motion notes",
+        "Jarvis, find my Biomolecules DPP PDF memory",
+        "log mistake: Forgot axial dipole 2kp/r3 factor",
+        "set alarm for 10:30",
         "What should I do right now, Jarvis?",
-        "Explain Coulomb's Law & Dipole Field (NCERT)",
         "GOC: Priority order of electronic effects",
-        "Biomolecules: Explain Km & competitive inhibition",
         "I feel tired / behind schedule—re-plan gently"
     )
 
@@ -1117,7 +1139,7 @@ private fun JarvisGlassChatScreen(
                             text = if (privacyOff) {
                                 "OFFLINE MODE ACTIVE // 0 BYTES LEAVE TABLET"
                             } else {
-                                "HYBRID CLOUD BRAIN // ${committedModelId.ifBlank { "gemini-3.8-flash" }}"
+                                "HYBRID CLOUD BRAIN + AUTONOMOUS TOOLS // ${committedModelId.ifBlank { "gemini-3.8-flash" }}"
                             },
                             color = palette.textPrimary,
                             fontFamily = FontFamily.Monospace,
@@ -1126,9 +1148,9 @@ private fun JarvisGlassChatScreen(
                         )
                         Text(
                             text = if (privacyOff) {
-                                "Using local NEET 2027 Plan + Study Library files only."
+                                "Using local NEET 2027 Plan + 0.Neet 2027 Permanent PDF Memory only."
                             } else {
-                                "Data leaving tablet: text prompt + matched snippet only (toggle Offline Locked to block)."
+                                "Autonomous tools active: log mistake, save note, set alarm, add event, search 0.Neet 2027."
                             },
                             color = palette.textSecondary,
                             fontSize = 11.sp
@@ -1184,7 +1206,7 @@ private fun JarvisGlassChatScreen(
             LiquidGlassPillInput(
                 value = searchFilter,
                 onValueChange = { searchFilter = it },
-                placeholder = "Search chat history (e.g., Rotational, Coulomb, GOC, Biomolecules)...",
+                placeholder = "Search chat history (e.g., Biomolecules, Coulomb, GOC, mistake)...",
                 lab = lab,
                 leadingIcon = Icons.Default.Search,
                 trailingContent = {
@@ -1329,7 +1351,7 @@ private fun JarvisGlassChatScreen(
 
                 if (isStreaming) {
                     Text(
-                        text = "J.A.R.V.I.S. is consulting your NEET 2027 timetable & Study Library...",
+                        text = "J.A.R.V.I.S. is consulting your 0.Neet 2027 Permanent PDF Memory & Vault...",
                         color = JarvisSpatialPalettes.StatusWarning,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 12.sp
@@ -1341,7 +1363,7 @@ private fun JarvisGlassChatScreen(
         LiquidGlassPillInput(
             value = userDraft,
             onValueChange = { userDraft = it },
-            placeholder = "Message J.A.R.V.I.S., sir (e.g. 'Jarvis, find my rotational motion notes')...",
+            placeholder = "Ask Jarvis or run a tool ('log mistake: ...', 'set alarm for 10:30', 'find Biomolecules')...",
             lab = lab,
             leadingIcon = Icons.Default.Mic,
             trailingContent = {
@@ -1661,7 +1683,7 @@ private fun SpatialNavigationRail(
                 state = orbState,
                 lab = lab,
                 onClick = onCycleOrb,
-                sizeDp = 44.dp
+                sizeDp = 42.dp
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
@@ -1791,7 +1813,7 @@ private fun TopSpatialHeader(
                 }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "At your service, sir. Study Library, 3D Live Orb & Tri-Accent Glass Ready.",
+                    text = "At your service, sir. 0.Neet 2027 Permanent PDF Memory, Vault & Tools Online.",
                     color = palette.textPrimary,
                     fontSize = 19.sp,
                     fontWeight = FontWeight.Bold
