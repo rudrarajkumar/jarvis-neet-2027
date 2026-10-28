@@ -43,6 +43,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -394,6 +395,7 @@ enum class VoiceOrbState {
 
 private enum class JarvisNavTab(val label: String, val icon: ImageVector) {
     LIVE_ORB("Live Orb", Icons.Default.GraphicEq),
+    VOICE_MIC("Voice & Mic", Icons.Default.Mic),
     STUDY_LIBRARY("0.Neet 2027", Icons.Default.Folder),
     VAULT_TOOLS("Vault", Icons.Default.Lock),
     NEET_COMMAND("NEET Hub", Icons.Default.Schedule),
@@ -688,11 +690,9 @@ object JarvisBrainEngine {
             todayLectures.joinToString(" | ") { "${it.trackId}: ${it.chapterTitle} (L${it.lectureNumberInChapter}/${it.totalLecturesInChapter})" }
         }
 
-        // 1. Check Autonomous Tool Router first (saves mistakes/notes, sets alarms, schedules events, or requests delete confirmation)
         val toolOutcome = JarvisAutonomousToolRouter.evaluateAndRunAutonomousTools(context, plan, userQuery)
         val toolPrefix = if (toolOutcome.toolSummaryBanner.isNotBlank()) "${toolOutcome.toolSummaryBanner}\n\n" else ""
 
-        // 2. Query Permanent PDF Memory Bank from `0.Neet 2027` without re-reading PDFs
         val rootFolder = StudyLibraryManager.getDedicatedRootFolder(context)
         StudyLibraryManager.ensurePermanentMemoriesLoaded(context, rootFolder)
         val allMemories = StudyLibraryManager.getAllPermanentMemories()
@@ -861,28 +861,39 @@ object JarvisBrainEngine {
 }
 
 class MainActivity : ComponentActivity() {
+    private var latestShareBanner by mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        val shareBanner = JarvisVaultManager.handleSharedIncomingIntent(this, intent)
+        NeetCoreStore.ensureAlarmReceiverRegistered(this)
+        latestShareBanner = JarvisVaultManager.handleSharedIncomingIntent(this, intent)
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
-                JarvisChapterSixApp(initialShareBanner = shareBanner)
+                JarvisChapterSevenApp(initialShareBanner = latestShareBanner)
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        val newBanner = JarvisVaultManager.handleSharedIncomingIntent(this, intent)
+        if (newBanner != null) {
+            latestShareBanner = newBanner
         }
     }
 }
 
 @Composable
-fun JarvisChapterSixApp(initialShareBanner: String? = null) {
+fun JarvisChapterSevenApp(initialShareBanner: String? = null) {
     val context = LocalContext.current
     val plan = remember { NeetPlanRepository.loadPlan(context) }
     val masterPrompt = remember { NeetPlanRepository.loadMasterPrompt(context) }
     val lab = remember { GlassLabController() }
     val palette = lab.currentPalette
 
-    var selectedTab by remember {
-        mutableStateOf(if (initialShareBanner != null) JarvisNavTab.VAULT_TOOLS else JarvisNavTab.STUDY_LIBRARY)
+    var selectedTab by remember(initialShareBanner) {
+        mutableStateOf(if (initialShareBanner != null) JarvisNavTab.VAULT_TOOLS else JarvisNavTab.LIVE_ORB)
     }
     var orbState by remember { mutableStateOf(VoiceOrbState.IDLE) }
     var showBootOverlay by remember { mutableStateOf(true) }
@@ -901,9 +912,9 @@ fun JarvisChapterSixApp(initialShareBanner: String? = null) {
                     ChatMessageItem(
                         id = 1L,
                         role = "jarvis",
-                        visibleText = "Good morning, sir. Chapter 6 AES-256 Vault, Mistake Notebook, D0-D30 Flashcards, Autonomous Tool-Calling, and your '0.Neet 2027' Permanent PDF Memory are online.",
+                        visibleText = "Good afternoon, sir. Your Green & Yellow 3D Hologram Orb, Native Hardware Alarm Clock, Adaptive Split-Screen UI, and Chapter 7 Always-On Voice & Double-Clap Engine are online.",
                         emotionTag = "calm",
-                        engineBadge = "VAULT & TOOLS READY",
+                        engineBadge = "CHAPTER 7 READY",
                         timestampIst = "ONLINE"
                     )
                 )
@@ -914,7 +925,7 @@ fun JarvisChapterSixApp(initialShareBanner: String? = null) {
     }
 
     LaunchedEffect(Unit) {
-        delay(800L)
+        delay(750L)
         showBootOverlay = false
     }
 
@@ -927,125 +938,181 @@ fun JarvisChapterSixApp(initialShareBanner: String? = null) {
 
     val tilt = rememberGyroscopeTilt(lab.gyroParallaxStrength)
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    // BoxWithConstraints detects Xiaomi Pad 6 Split-Screen / Floating Window width automatically
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val isSplitScreenCompact = maxWidth < 680.dp
+
         LivingAuroraBackground(
             lab = lab,
             orbState = orbState,
             tilt = tilt
         )
 
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 16.dp, vertical = 18.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            SpatialNavigationRail(
-                lab = lab,
-                selectedTab = selectedTab,
-                orbState = orbState,
-                onSelectTab = { selectedTab = it },
-                onCycleOrb = {
-                    val values = VoiceOrbState.values()
-                    orbState = values[(orbState.ordinal + 1) % values.size]
-                }
-            )
-
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                TopSpatialHeader(
+        @Composable
+        fun RenderActiveTabContent() {
+            when (selectedTab) {
+                JarvisNavTab.LIVE_ORB -> JarvisLiveParticleOrbPage(
                     plan = plan,
+                    masterPrompt = masterPrompt,
+                    messages = chatMessages,
+                    committedModelId = committedModelId,
+                    committedTemperature = committedTemperature,
+                    forceOffline = forceOfflineRouter,
+                    tilt = tilt
+                )
+                JarvisNavTab.VOICE_MIC -> JarvisListeningAndWakeScreen(
+                    plan = plan,
+                    masterPrompt = masterPrompt,
+                    lab = lab,
+                    messages = chatMessages,
+                    committedModelId = committedModelId,
+                    committedTemperature = committedTemperature,
+                    forceOffline = forceOfflineRouter,
+                    tilt = tilt
+                )
+                JarvisNavTab.STUDY_LIBRARY -> StudyLibraryScreen(
+                    plan = plan,
+                    masterPrompt = masterPrompt,
                     lab = lab,
                     committedModelId = committedModelId,
-                    forceOffline = forceOfflineRouter || EncryptedKeyStoreVault.isOfflinePrivacyLockEnabled(context),
+                    committedTemperature = committedTemperature,
+                    forceOffline = forceOfflineRouter,
+                    tilt = tilt
+                )
+                JarvisNavTab.VAULT_TOOLS -> EditableVaultAndToolsScreen(
+                    plan = plan,
+                    lab = lab,
+                    incomingShareBanner = initialShareBanner,
+                    tilt = tilt
+                )
+                JarvisNavTab.NEET_COMMAND -> NeetCoreCommandScreen(
+                    plan = plan,
+                    lab = lab,
+                    tilt = tilt
+                )
+                JarvisNavTab.CALENDAR_PROGRESS -> InteractiveCalendarAndProgressScreen(
+                    plan = plan,
+                    lab = lab,
+                    tilt = tilt
+                )
+                JarvisNavTab.JARVIS_CHAT -> JarvisGlassChatScreen(
+                    plan = plan,
+                    masterPrompt = masterPrompt,
+                    lab = lab,
+                    messages = chatMessages,
+                    committedModelId = committedModelId,
+                    committedTemperature = committedTemperature,
+                    forceOffline = forceOfflineRouter,
+                    onToggleOffline = { forceOfflineRouter = !forceOfflineRouter },
+                    onOrbStateChange = { orbState = it },
+                    tilt = tilt
+                )
+                JarvisNavTab.BRAIN_ROUTER -> BrainRouterAndScannerScreen(
+                    lab = lab,
+                    discoveredModels = discoveredModels,
+                    committedModelId = committedModelId,
+                    committedTemperature = committedTemperature,
+                    forceOffline = forceOfflineRouter,
+                    onToggleOffline = { forceOfflineRouter = !forceOfflineRouter },
+                    onCommitSuccess = { newModel, newTemp ->
+                        committedModelId = newModel
+                        committedTemperature = newTemp
+                        EncryptedKeyStoreVault.saveCommittedEngine(context, newModel, newTemp)
+                    },
+                    tilt = tilt
+                )
+                JarvisNavTab.DASHBOARD -> DashboardSpatialContent(
+                    plan = plan,
+                    masterPrompt = masterPrompt,
+                    lab = lab,
                     tick = tick,
                     tilt = tilt
                 )
+                JarvisNavTab.GLASS_LAB -> GlassLabScreen(lab = lab, tilt = tilt)
+                JarvisNavTab.GALLERY -> ComponentGalleryScreen(
+                    lab = lab,
+                    orbState = orbState,
+                    onCycleOrbState = {
+                        val values = VoiceOrbState.values()
+                        orbState = values[(orbState.ordinal + 1) % values.size]
+                    },
+                    tilt = tilt
+                )
+                JarvisNavTab.API_VAULT -> EncryptedApiKeyVaultScreen(lab = lab, tilt = tilt)
+            }
+        }
 
-                when (selectedTab) {
-                    JarvisNavTab.LIVE_ORB -> JarvisLiveParticleOrbPage(
+        if (isSplitScreenCompact) {
+            // SPLIT-SCREEN / FLOATING WINDOW MODE: Compact Top Navigation Strip + 100% Width Content
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 10.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                CompactSplitScreenTopNavBar(
+                    lab = lab,
+                    selectedTab = selectedTab,
+                    orbState = orbState,
+                    onSelectTab = { selectedTab = it },
+                    onCycleOrb = {
+                        val values = VoiceOrbState.values()
+                        orbState = values[(orbState.ordinal + 1) % values.size]
+                    }
+                )
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    TopSpatialHeader(
                         plan = plan,
-                        masterPrompt = masterPrompt,
-                        messages = chatMessages,
+                        lab = lab,
                         committedModelId = committedModelId,
-                        committedTemperature = committedTemperature,
-                        forceOffline = forceOfflineRouter,
-                        tilt = tilt
-                    )
-                    JarvisNavTab.STUDY_LIBRARY -> StudyLibraryScreen(
-                        plan = plan,
-                        masterPrompt = masterPrompt,
-                        lab = lab,
-                        committedModelId = committedModelId,
-                        committedTemperature = committedTemperature,
-                        forceOffline = forceOfflineRouter,
-                        tilt = tilt
-                    )
-                    JarvisNavTab.VAULT_TOOLS -> EditableVaultAndToolsScreen(
-                        plan = plan,
-                        lab = lab,
-                        incomingShareBanner = initialShareBanner,
-                        tilt = tilt
-                    )
-                    JarvisNavTab.NEET_COMMAND -> NeetCoreCommandScreen(
-                        plan = plan,
-                        lab = lab,
-                        tilt = tilt
-                    )
-                    JarvisNavTab.CALENDAR_PROGRESS -> InteractiveCalendarAndProgressScreen(
-                        plan = plan,
-                        lab = lab,
-                        tilt = tilt
-                    )
-                    JarvisNavTab.JARVIS_CHAT -> JarvisGlassChatScreen(
-                        plan = plan,
-                        masterPrompt = masterPrompt,
-                        lab = lab,
-                        messages = chatMessages,
-                        committedModelId = committedModelId,
-                        committedTemperature = committedTemperature,
-                        forceOffline = forceOfflineRouter,
-                        onToggleOffline = { forceOfflineRouter = !forceOfflineRouter },
-                        onOrbStateChange = { orbState = it },
-                        tilt = tilt
-                    )
-                    JarvisNavTab.BRAIN_ROUTER -> BrainRouterAndScannerScreen(
-                        lab = lab,
-                        discoveredModels = discoveredModels,
-                        committedModelId = committedModelId,
-                        committedTemperature = committedTemperature,
-                        forceOffline = forceOfflineRouter,
-                        onToggleOffline = { forceOfflineRouter = !forceOfflineRouter },
-                        onCommitSuccess = { newModel, newTemp ->
-                            committedModelId = newModel
-                            committedTemperature = newTemp
-                            EncryptedKeyStoreVault.saveCommittedEngine(context, newModel, newTemp)
-                        },
-                        tilt = tilt
-                    )
-                    JarvisNavTab.DASHBOARD -> DashboardSpatialContent(
-                        plan = plan,
-                        masterPrompt = masterPrompt,
-                        lab = lab,
+                        forceOffline = forceOfflineRouter || EncryptedKeyStoreVault.isOfflinePrivacyLockEnabled(context),
                         tick = tick,
                         tilt = tilt
                     )
-                    JarvisNavTab.GLASS_LAB -> GlassLabScreen(lab = lab, tilt = tilt)
-                    JarvisNavTab.GALLERY -> ComponentGalleryScreen(
+                    RenderActiveTabContent()
+                }
+            }
+        } else {
+            // FULL TABLET LANDSCAPE MODE: Left Spatial Navigation Rail + Main Content Column
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp, vertical = 18.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                SpatialNavigationRail(
+                    lab = lab,
+                    selectedTab = selectedTab,
+                    orbState = orbState,
+                    onSelectTab = { selectedTab = it },
+                    onCycleOrb = {
+                        val values = VoiceOrbState.values()
+                        orbState = values[(orbState.ordinal + 1) % values.size]
+                    }
+                )
+
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    TopSpatialHeader(
+                        plan = plan,
                         lab = lab,
-                        orbState = orbState,
-                        onCycleOrbState = {
-                            val values = VoiceOrbState.values()
-                            orbState = values[(orbState.ordinal + 1) % values.size]
-                        },
+                        committedModelId = committedModelId,
+                        forceOffline = forceOfflineRouter || EncryptedKeyStoreVault.isOfflinePrivacyLockEnabled(context),
+                        tick = tick,
                         tilt = tilt
                     )
-                    JarvisNavTab.API_VAULT -> EncryptedApiKeyVaultScreen(lab = lab, tilt = tilt)
+                    RenderActiveTabContent()
                 }
             }
         }
@@ -1071,19 +1138,96 @@ fun JarvisChapterSixApp(initialShareBanner: String? = null) {
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "J.A.R.V.I.S. // CHAPTER 6 VAULT & AUTONOMOUS TOOLS ONLINE",
+                        text = "J.A.R.V.I.S. // 3D GREEN & YELLOW HOLOGRAM ORB + CHAPTER 7 VOICE",
                         color = palette.accentPrimary,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp
+                        fontSize = 15.sp
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Mounting 0.Neet 2027 Permanent PDF Memory & AES-256 Vault... (Tap to skip)",
+                        text = "Adaptive Split-Screen Ready • Native Alarms Armed • Shared 16kHz Mic Online (Tap to skip)",
                         color = palette.textSecondary,
                         fontSize = 13.sp
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompactSplitScreenTopNavBar(
+    lab: GlassLabController,
+    selectedTab: JarvisNavTab,
+    orbState: VoiceOrbState,
+    onSelectTab: (JarvisNavTab) -> Unit,
+    onCycleOrb: () -> Unit
+) {
+    val palette = lab.currentPalette
+    val shape = RoundedCornerShape(20.dp)
+    val tabAccents = listOf(
+        JarvisSpatialPalettes.StatusSuccess,
+        JarvisSpatialPalettes.StatusWarning,
+        JarvisSpatialPalettes.StatusError
+    )
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(palette.glassSurface.copy(alpha = 0.88f))
+            .border(
+                width = 1.2.dp,
+                brush = Brush.horizontalGradient(
+                    colors = listOf(
+                        JarvisSpatialPalettes.StatusSuccess,
+                        JarvisSpatialPalettes.StatusWarning,
+                        JarvisSpatialPalettes.StatusError
+                    )
+                ),
+                shape = shape
+            )
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 10.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        ArcReactorVoiceOrb(
+            state = orbState,
+            lab = lab,
+            onClick = onCycleOrb,
+            sizeDp = 32.dp
+        )
+        JarvisNavTab.values().forEachIndexed { idx, tab ->
+            val active = selectedTab == tab
+            val tabColor = tabAccents[idx % tabAccents.size]
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(if (active) tabColor.copy(alpha = 0.25f) else Color.Transparent)
+                    .border(
+                        width = if (active) 1.dp else 0.dp,
+                        color = if (active) tabColor else Color.Transparent,
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    .clickable { onSelectTab(tab) }
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = tab.icon,
+                    contentDescription = tab.label,
+                    tint = if (active) tabColor else palette.textSecondary,
+                    modifier = Modifier.size(15.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = tab.label,
+                    color = if (active) Color.White else palette.textSecondary,
+                    fontSize = 11.sp,
+                    fontWeight = if (active) FontWeight.Bold else FontWeight.Medium
+                )
             }
         }
     }
@@ -1112,9 +1256,9 @@ private fun JarvisGlassChatScreen(
     val privacyOff = EncryptedKeyStoreVault.isOfflinePrivacyLockEnabled(context) || forceOffline
 
     val suggestionChips = listOf(
+        "set alarm for 10:30",
         "Jarvis, find my Biomolecules DPP PDF memory",
         "log mistake: Forgot axial dipole 2kp/r3 factor",
-        "set alarm for 10:30",
         "What should I do right now, Jarvis?",
         "GOC: Priority order of electronic effects",
         "I feel tired / behind schedule—re-plan gently"
@@ -1127,7 +1271,7 @@ private fun JarvisGlassChatScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                     Icon(
                         imageVector = if (privacyOff) Icons.Default.CloudOff else Icons.Default.CloudDone,
                         contentDescription = null,
@@ -1150,7 +1294,7 @@ private fun JarvisGlassChatScreen(
                             text = if (privacyOff) {
                                 "Using local NEET 2027 Plan + 0.Neet 2027 Permanent PDF Memory only."
                             } else {
-                                "Autonomous tools active: log mistake, save note, set alarm, add event, search 0.Neet 2027."
+                                "Native alarms, mistake logger, 0.Neet 2027 PDF memory & split-screen ready."
                             },
                             color = palette.textSecondary,
                             fontSize = 11.sp
@@ -1363,7 +1507,7 @@ private fun JarvisGlassChatScreen(
         LiquidGlassPillInput(
             value = userDraft,
             onValueChange = { userDraft = it },
-            placeholder = "Ask Jarvis or run a tool ('log mistake: ...', 'set alarm for 10:30', 'find Biomolecules')...",
+            placeholder = "Ask Jarvis or run a tool ('set alarm for 10:30', 'log mistake: ...', 'find Biomolecules')...",
             lab = lab,
             leadingIcon = Icons.Default.Mic,
             trailingContent = {
@@ -1787,9 +1931,11 @@ private fun TopSpatialHeader(
     val imphalNow = remember(tick) { NeetPlanRepository.getImphalNow() }
     val daysToNeet = remember(tick) { NeetPlanRepository.getDaysUntilExam(plan, imphalNow.toLocalDate()) }
 
-    LiquidGlassCard(lab = lab, tilt = tilt, contentPadding = 16.dp) {
+    LiquidGlassCard(lab = lab, tilt = tilt, contentPadding = 14.dp) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -1808,41 +1954,42 @@ private fun TopSpatialHeader(
                         color = JarvisSpatialPalettes.StatusWarning,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp
+                        fontSize = 11.sp
                     )
                 }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "At your service, sir. 0.Neet 2027 Permanent PDF Memory, Vault & Tools Online.",
+                    text = "At your service, sir. 3D Hologram Orb, Native Alarms & Voice Wake Ready.",
                     color = palette.textPrimary,
-                    fontSize = 19.sp,
+                    fontSize = 17.sp,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "Home: ${plan.meta.homeProfile.district}, ${plan.meta.homeProfile.state} (${plan.meta.homeProfile.pin}) | TZ: ${plan.meta.homeProfile.timezone}",
+                    text = "Home: ${plan.meta.homeProfile.district}, ${plan.meta.homeProfile.state} (${plan.meta.homeProfile.pin}) | Split-Screen Adaptive",
                     color = palette.textSecondary,
-                    fontSize = 12.sp
+                    fontSize = 11.sp
                 )
             }
+            Spacer(modifier = Modifier.width(16.dp))
             Column(horizontalAlignment = Alignment.End) {
                 Text(
                     text = imphalNow.format(DateTimeFormatter.ofPattern("hh:mm:ss a 'IST'")),
                     color = palette.textPrimary,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 22.sp
+                    fontSize = 20.sp
                 )
                 Text(
                     text = "$daysToNeet DAYS TO NEET UG 2027",
                     color = JarvisSpatialPalettes.StatusSuccess,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 12.sp
+                    fontSize = 11.sp
                 )
                 Text(
                     text = "Target: ${plan.meta.goalInstitution} (AIR <= ${plan.meta.aiimsNagpurCutoffs2026Round1.ASPIRATIONAL_OPEN_BUFFER})",
                     color = palette.textSecondary,
-                    fontSize = 11.sp
+                    fontSize = 10.sp
                 )
             }
         }
@@ -1952,14 +2099,16 @@ private fun DashboardSpatialContent(
                 Color(0xFFFAFAFA)
             )
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 dayOneAssignments.forEachIndexed { idx, item ->
                     val accent = trackAccents[idx % trackAccents.size]
                     Box(
                         modifier = Modifier
-                            .weight(1f)
+                            .width(220.dp)
                             .clip(RoundedCornerShape(18.dp))
                             .background(
                                 Brush.verticalGradient(
@@ -2020,11 +2169,12 @@ private fun DashboardSpatialContent(
             )
             Spacer(modifier = Modifier.height(12.dp))
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 LiquidGlassButton(
-                    modifier = Modifier.weight(1f),
                     text = if (batteryOk) "Battery: Unrestricted ✓" else "1. Disable Battery Saver",
                     icon = if (batteryOk) Icons.Default.CheckCircle else Icons.Default.BatteryChargingFull,
                     lab = lab,
@@ -2036,7 +2186,6 @@ private fun DashboardSpatialContent(
                     }
                 )
                 LiquidGlassButton(
-                    modifier = Modifier.weight(1f),
                     text = if (autostartOk) "Xiaomi Autostart ✓" else "2. Xiaomi Autostart & BG",
                     icon = if (autostartOk) Icons.Default.CheckCircle else Icons.Default.AutoAwesome,
                     lab = lab,
@@ -2049,7 +2198,6 @@ private fun DashboardSpatialContent(
                     }
                 )
                 LiquidGlassButton(
-                    modifier = Modifier.weight(1f),
                     text = if (filesOk) "Study Folder Access ✓" else "3. Grant All Files Access",
                     icon = if (filesOk) Icons.Default.CheckCircle else Icons.Default.Security,
                     lab = lab,
@@ -2061,7 +2209,6 @@ private fun DashboardSpatialContent(
                     }
                 )
                 LiquidGlassButton(
-                    modifier = Modifier.weight(1f),
                     text = if (overlayOk) "HUD Overlay Ready ✓" else "4. Allow HUD Overlay",
                     icon = if (overlayOk) Icons.Default.CheckCircle else Icons.Default.Security,
                     lab = lab,
@@ -2315,7 +2462,10 @@ private fun ComponentGalleryScreen(
                         fontSize = 13.sp
                     )
                     Spacer(modifier = Modifier.height(12.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
                         LiquidGlassButton(
                             text = "Emerald Glass",
                             icon = Icons.Default.AutoAwesome,
@@ -2383,13 +2533,15 @@ private fun ComponentGalleryScreen(
             )
             Spacer(modifier = Modifier.height(14.dp))
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                StatusBadge(Modifier.weight(1f), "SUCCESS // ON TRACK", JarvisSpatialPalettes.StatusSuccess, Icons.Default.CheckCircle)
-                StatusBadge(Modifier.weight(1f), "WARNING // SLEEP GUARD", JarvisSpatialPalettes.StatusWarning, Icons.Default.Warning)
-                StatusBadge(Modifier.weight(1f), "ERROR // MISSED SLOT", JarvisSpatialPalettes.StatusError, Icons.Default.Error)
-                StatusBadge(Modifier.weight(1f), "INFO // IMPHAL IST", JarvisSpatialPalettes.StatusInfo, Icons.Default.Info)
+                StatusBadge(Modifier.width(190.dp), "SUCCESS // ON TRACK", JarvisSpatialPalettes.StatusSuccess, Icons.Default.CheckCircle)
+                StatusBadge(Modifier.width(190.dp), "WARNING // SLEEP GUARD", JarvisSpatialPalettes.StatusWarning, Icons.Default.Warning)
+                StatusBadge(Modifier.width(190.dp), "ERROR // MISSED SLOT", JarvisSpatialPalettes.StatusError, Icons.Default.Error)
+                StatusBadge(Modifier.width(190.dp), "INFO // IMPHAL IST", JarvisSpatialPalettes.StatusInfo, Icons.Default.Info)
             }
         }
     }
@@ -2514,7 +2666,7 @@ private fun EncryptedApiKeyVaultScreen(
             subtitle = "Stored Status: $savedPicovoiceMask",
             value = picovoiceInput,
             onValueChange = { picovoiceInput = it },
-            placeholder = "Paste free Picovoice Console AccessKey (for Chapter 7)",
+            placeholder = "Paste free Picovoice Console AccessKey (Optional — local DSP wake active)",
             lab = lab,
             tilt = tilt,
             onSave = {
