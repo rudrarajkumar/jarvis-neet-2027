@@ -11,6 +11,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.media.ToneGenerator
@@ -42,28 +43,20 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -94,6 +87,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -108,7 +102,7 @@ import kotlin.math.log10
 import kotlin.math.sqrt
 
 // ============================================================================
-// 1. SHARED ALWAYS-ON 16kHz MIC ENGINE, WAKE-WORD ("JARVIS") & DOUBLE-CLAP DSP
+// 1. SHARED ALWAYS-ON 16kHz MIC ENGINE WITH CLEAN SPEECHRECOGNIZER HAND-OFF
 // ============================================================================
 
 enum class SttEngineMode(val badge: String) {
@@ -133,16 +127,18 @@ data class NeetBenchmarkPhrase(
 )
 
 object SharedMicAndWakeManager {
-    private const val PREFS_NAME = "jarvis_listening_chapter7_prefs"
     private const val SAMPLE_RATE = 16000
     private const val RING_BUFFER_SECONDS = 8
     private const val RING_BUFFER_SAMPLES = SAMPLE_RATE * RING_BUFFER_SECONDS
 
-    // Shared 8-second PCM ring buffer so mid-sentence internet drops never lose audio
     private val pcmRingBuffer = ShortArray(RING_BUFFER_SAMPLES)
     private var ringWritePos = 0
 
+    // True when user wants the background/shared DSP stream active between STT turns
+    var userWantsStreamArmed by mutableStateOf(false)
     var isSharedStreamRunning by mutableStateOf(false)
+    var isHandedOffToStt by mutableStateOf(false)
+
     var liveMicDb by mutableFloatStateOf(-55f)
     var livePeakNormalized by mutableFloatStateOf(0.05f)
     var wakeWordEnabled by mutableStateOf(true)
@@ -150,14 +146,14 @@ object SharedMicAndWakeManager {
     var wakeChimeEnabled by mutableStateOf(true)
     var falseTriggerTestMode by mutableStateOf(false)
 
-    var clapSensitivity by mutableFloatStateOf(0.68f) // 0.2..0.95
-    var wakeSensitivity by mutableFloatStateOf(0.72f)
-    var cooldownSeconds by mutableFloatStateOf(2.5f)
+    var clapSensitivity by mutableFloatStateOf(0.72f)
+    var wakeSensitivity by mutableFloatStateOf(0.75f)
+    var cooldownSeconds by mutableFloatStateOf(2.0f)
 
     var totalWakeTriggers by mutableIntStateOf(0)
     var totalClapTriggers by mutableIntStateOf(0)
     var falseTriggerCount by mutableIntStateOf(0)
-    var lastTriggerLog by mutableStateOf("No wake trigger yet. Say 'Jarvis' or double-clap to test.")
+    var lastTriggerLog by mutableStateOf("Tap '1. Start Shared Mic Stream' — then Double-Clap or say 'Jarvis'!")
     var aecAvailable by mutableStateOf(false)
     var nsAvailable by mutableStateOf(false)
 
@@ -165,26 +161,50 @@ object SharedMicAndWakeManager {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var lastTriggerMillis = 0L
     private var firstClapMillis = 0L
+    private var consecutiveVoiceFrames = 0
 
-    var onWakeActivatedCallback: (() -> Unit)? = null
+    // Callback invoked on Main thread AFTER AudioRecord has released the microphone!
+    var onWakeActivatedCallback: ((triggerType: String) -> Unit)? = null
 
     fun playWakeActivationChime() {
         if (!wakeChimeEnabled) return
         runCatching {
-            val tone = ToneGenerator( android.media.AudioManager.STREAM_NOTIFICATION, 85)
+            val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 90)
             tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 160)
         }
     }
 
+    /**
+     * Suspends and cleanly closes AudioRecord so Android SpeechRecognizer gets 100% exclusive
+     * access to the Xiaomi Pad 6 microphone without ERROR_AUDIO (3).
+     */
+    suspend fun pauseStreamForSpeechTurn() {
+        isHandedOffToStt = true
+        isSharedStreamRunning = false
+        audioJob?.cancelAndJoin()
+        audioJob = null
+        // Give Xiaomi HyperOS audio HAL 140ms to fully release the hardware input stream
+        delay(140L)
+    }
+
+    fun resumeStreamAfterSpeechTurn(context: Context) {
+        isHandedOffToStt = false
+        if (userWantsStreamArmed && !isSharedStreamRunning) {
+            startSharedMicStream(context)
+        }
+    }
+
     fun startSharedMicStream(context: Context) {
-        if (isSharedStreamRunning) return
         val hasPerm = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         if (!hasPerm) {
             lastTriggerLog = "Grant Microphone permission first to start the shared 16kHz stream."
             return
         }
+        userWantsStreamArmed = true
+        if (isSharedStreamRunning || isHandedOffToStt) return
 
         isSharedStreamRunning = true
+        val appCtx = context.applicationContext
         audioJob?.cancel()
         audioJob = scope.launch {
             val minBuf = AudioRecord.getMinBufferSize(
@@ -195,7 +215,7 @@ object SharedMicAndWakeManager {
 
             val recorder = runCatching {
                 AudioRecord(
-                    MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                    MediaRecorder.AudioSource.VOICE_RECOGNITION,
                     SAMPLE_RATE,
                     AudioFormat.CHANNEL_IN_MONO,
                     AudioFormat.ENCODING_PCM_16BIT,
@@ -205,11 +225,10 @@ object SharedMicAndWakeManager {
 
             if (recorder == null || recorder.state != AudioRecord.STATE_INITIALIZED) {
                 isSharedStreamRunning = false
-                lastTriggerLog = "AudioRecord busy or unavailable."
+                lastTriggerLog = "Mic busy — releasing for SpeechRecognizer."
                 return@launch
             }
 
-            // Attach Hardware Acoustic Echo Canceler (for Barge-In) & Noise Suppressor
             val sessionId = recorder.audioSessionId
             aecAvailable = AcousticEchoCanceler.isAvailable()
             nsAvailable = NoiseSuppressor.isAvailable()
@@ -217,12 +236,14 @@ object SharedMicAndWakeManager {
             val ns = if (nsAvailable) runCatching { NoiseSuppressor.create(sessionId)?.apply { enabled = true } }.getOrNull() else null
             val agc = if (AutomaticGainControl.isAvailable()) runCatching { AutomaticGainControl.create(sessionId)?.apply { enabled = true } }.getOrNull() else null
 
-            val frameBuffer = ShortArray(1024)
-            var ambientRmsFloor = 220f
+            val frameBuffer = ShortArray(1024) // ~64ms per frame at 16kHz
+            var ambientRmsFloor = 180f
+            consecutiveVoiceFrames = 0
+            var pendingHandoffReason: String? = null
 
             try {
                 recorder.startRecording()
-                while (isActive && isSharedStreamRunning) {
+                while (isActive && isSharedStreamRunning && pendingHandoffReason == null) {
                     val readCount = recorder.read(frameBuffer, 0, frameBuffer.size)
                     if (readCount > 0) {
                         var sumSq = 0.0
@@ -246,41 +267,65 @@ object SharedMicAndWakeManager {
                         }
 
                         val rms = sqrt(sumSq / readCount).toFloat().coerceAtLeast(1f)
-                        ambientRmsFloor = (ambientRmsFloor * 0.96f + rms * 0.04f).coerceIn(120f, 3500f)
+                        ambientRmsFloor = (ambientRmsFloor * 0.97f + rms * 0.03f).coerceIn(90f, 3000f)
                         val db = (20f * log10(rms / 32768f)).coerceIn(-60f, 0f)
                         liveMicDb = db
-                        livePeakNormalized = (maxAbs / 26000f).coerceIn(0.03f, 1.0f)
+                        livePeakNormalized = (maxAbs / 22000f).coerceIn(0.03f, 1.0f)
 
                         val now = System.currentTimeMillis()
                         val cooldownMs = (cooldownSeconds * 1000f).toLong()
                         if (now - lastTriggerMillis < cooldownMs) continue
 
                         // 1. On-Device Double-Clap Impulse Detector
-                        // A clap is a sharp, high-crest-factor transient with high zero-crossing rate
-                        val clapThreshold = (28000f * (1.15f - clapSensitivity)).coerceIn(4500f, 24000f)
-                        if (doubleClapEnabled && maxAbs > clapThreshold && rms > ambientRmsFloor * 2.8f && zeroCrossings > 90) {
-                            if (firstClapMillis == 0L || (now - firstClapMillis) > 520L) {
+                        val clapThreshold = (25000f * (1.12f - clapSensitivity)).coerceIn(3800f, 22000f)
+                        if (doubleClapEnabled && maxAbs > clapThreshold && rms > ambientRmsFloor * 2.4f && zeroCrossings > 75) {
+                            if (firstClapMillis == 0L || (now - firstClapMillis) > 550L) {
                                 firstClapMillis = now
-                            } else if ((now - firstClapMillis) in 130L..490L) {
+                            } else if ((now - firstClapMillis) in 110L..520L) {
                                 firstClapMillis = 0L
                                 lastTriggerMillis = now
                                 val stamp = SimpleDateFormat("hh:mm:ss a", Locale.US).format(Date(now))
                                 if (falseTriggerTestMode) {
                                     falseTriggerCount++
-                                    lastTriggerLog = "[$stamp] False-Trigger Test logged a Double-Clap impulse (${maxAbs} peak)."
+                                    lastTriggerLog = "[$stamp] False-Trigger Test logged a Double-Clap impulse."
                                 } else {
                                     totalClapTriggers++
-                                    lastTriggerLog = "[$stamp] ✓ DOUBLE-CLAP ACTIVATED (On-Device DSP • 0 bytes left tablet)."
+                                    lastTriggerLog = "[$stamp] ✓ DOUBLE-CLAP! Releasing DSP mic -> Listening to your command now..."
                                     playWakeActivationChime()
-                                    withContext(Dispatchers.Main) {
-                                        onWakeActivatedCallback?.invoke()
-                                    }
+                                    pendingHandoffReason = "CLAP"
+                                    break
                                 }
                             }
+                        }
+
+                        // 2. On-Device Voice / "Jarvis" Syllable Wake Detector
+                        // Human speech sits in 18..95 zero-crossings per 1024-sample frame with sustained RMS above ambient
+                        val voiceThreshold = (1800f * (1.15f - wakeSensitivity)).coerceIn(320f, 1600f)
+                        if (wakeWordEnabled && rms > maxOf(voiceThreshold, ambientRmsFloor * 2.1f) && zeroCrossings in 14..110) {
+                            consecutiveVoiceFrames++
+                            // ~3 consecutive frames (~190ms of clear speech, e.g. starting to say "Jarvis...")
+                            if (consecutiveVoiceFrames >= 3) {
+                                consecutiveVoiceFrames = 0
+                                lastTriggerMillis = now
+                                val stamp = SimpleDateFormat("hh:mm:ss a", Locale.US).format(Date(now))
+                                if (falseTriggerTestMode) {
+                                    falseTriggerCount++
+                                    lastTriggerLog = "[$stamp] False-Trigger Test logged a Voice Wake syllable."
+                                } else {
+                                    totalWakeTriggers++
+                                    lastTriggerLog = "[$stamp] 🎙️ VOICE WAKE ('JARVIS')! Listening to your command now..."
+                                    playWakeActivationChime()
+                                    pendingHandoffReason = "VOICE_WAKE"
+                                    break
+                                }
+                            }
+                        } else {
+                            consecutiveVoiceFrames = (consecutiveVoiceFrames - 1).coerceAtLeast(0)
                         }
                     }
                 }
             } finally {
+                // CRITICAL: Always stop & release AudioRecord BEFORE invoking SpeechRecognizer!
                 runCatching { recorder.stop() }
                 runCatching { recorder.release() }
                 runCatching { aec?.release() }
@@ -288,13 +333,32 @@ object SharedMicAndWakeManager {
                 runCatching { agc?.release() }
                 isSharedStreamRunning = false
             }
+
+            // If we exited the loop because of a Double-Clap or Voice Wake, hand off cleanly to SpeechRecognizer!
+            if (pendingHandoffReason != null) {
+                isHandedOffToStt = true
+                delay(150L) // Let Xiaomi HyperOS release the mic lock completely
+                withContext(Dispatchers.Main) {
+                    val cb = onWakeActivatedCallback
+                    if (cb != null) {
+                        cb.invoke(pendingHandoffReason!!)
+                    } else {
+                        // If user is on another screen, resume stream
+                        isHandedOffToStt = false
+                        if (userWantsStreamArmed) startSharedMicStream(appCtx)
+                    }
+                }
+            }
         }
     }
 
-    fun stopSharedMicStream() {
+    fun stopSharedMicStreamCompletely() {
+        userWantsStreamArmed = false
+        isHandedOffToStt = false
         isSharedStreamRunning = false
         audioJob?.cancel()
         audioJob = null
+        lastTriggerLog = "Shared 16kHz Mic Stream stopped."
     }
 
     fun getBufferedSecondsAvailable(): Int = RING_BUFFER_SECONDS
@@ -309,7 +373,7 @@ class JarvisWakeForegroundService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == "STOP_JARVIS_WAKE_SERVICE") {
-            SharedMicAndWakeManager.stopSharedMicStream()
+            SharedMicAndWakeManager.stopSharedMicStreamCompletely()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
@@ -337,7 +401,7 @@ class JarvisWakeForegroundService : Service() {
         val notif = NotificationCompat.Builder(this, channelId)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle("J.A.R.V.I.S. On-Device Wake Guard Active")
-            .setContentText("Listening locally for 'Jarvis' or Double-Clap (0 bytes leave tablet)")
+            .setContentText("Listening locally for 'Jarvis' or Double-Clap (Auto Mic Hand-Off Ready)")
             .setContentIntent(openPending)
             .setOngoing(true)
             .build()
@@ -353,7 +417,7 @@ class JarvisWakeForegroundService : Service() {
     }
 
     override fun onDestroy() {
-        SharedMicAndWakeManager.stopSharedMicStream()
+        SharedMicAndWakeManager.stopSharedMicStreamCompletely()
         super.onDestroy()
     }
 }
@@ -388,10 +452,6 @@ object JarvisSttRouter {
             }
         }
 
-    /**
-     * Real TCP reachability probe with hysteresis (requires 2 consecutive passes to switch back online,
-     * switches to offline immediately on first drop so mid-sentence speech isn't lost).
-     */
     suspend fun checkRealReachabilityWithHysteresis(): Boolean = withContext(Dispatchers.IO) {
         val reachable = runCatching {
             Socket().use { socket ->
@@ -441,7 +501,7 @@ object JarvisSttRouter {
         NeetBenchmarkPhrase(15, "Zoology", "Oxygen dissociation curve of haemoglobin is sigmoid and shifts right at high pCO2"),
         NeetBenchmarkPhrase(16, "Zoology", "Luteinizing hormone surge triggers ovulation from Graafian follicle on day fourteen"),
         NeetBenchmarkPhrase(17, "Botany", "Concanavalin A is a lectin and vinblastin is a secondary metabolite drug in NCERT"),
-        NeetBenchmarkPhrase(18, "Botany", " Kranz anatomy in C4 plants prevents photorespiration using PEPcase in mesophyll cells"),
+        NeetBenchmarkPhrase(18, "Botany", "Kranz anatomy in C4 plants prevents photorespiration using PEPcase in mesophyll cells"),
         NeetBenchmarkPhrase(19, "Hinglish", "Jarvis Biomolecules DPP zero one mein carbohydrates aur amino acids ke notes dikhao"),
         NeetBenchmarkPhrase(20, "Hinglish", "Electric charges and fields lecture four ke baad fifty minute NEETprep practice set lagao")
     )
@@ -467,10 +527,11 @@ fun JarvisListeningAndWakeScreen(
     val palette = lab.currentPalette
 
     var isContinuousConvo by remember { mutableStateOf(false) }
+    var isSttActivelyListening by remember { mutableStateOf(false) }
     var isForegroundServiceArmed by remember { mutableStateOf(false) }
     var livePartialTranscript by remember { mutableStateOf("") }
     var lastSpokenReply by remember {
-        mutableStateOf("Say 'Jarvis' or Double-Clap to wake me hands-free, sir. You can interrupt me mid-sentence (Barge-In) at any time.")
+        mutableStateOf("Double-Clap or say 'Jarvis' (e.g. 'Jarvis, what should I study now?') — I will automatically release the DSP mic, transcribe your voice, and speak back!")
     }
     var firstWordLatencyMs by remember { mutableLongStateOf(0L) }
     var showBenchmarkList by remember { mutableStateOf(false) }
@@ -481,7 +542,6 @@ fun JarvisListeningAndWakeScreen(
         EncryptedKeyStoreVault.readSecret(context, EncryptedKeyStoreVault.KEY_PICOVOICE_ACCESS)
     }
 
-    // Sentence-by-sentence streaming British Butler TTS with Barge-In support
     var ttsEngine by remember { mutableStateOf<TextToSpeech?>(null) }
     var isJarvisSpeaking by remember { mutableStateOf(false) }
 
@@ -501,7 +561,6 @@ fun JarvisListeningAndWakeScreen(
         }
     }
 
-    // Periodic real reachability check with hysteresis
     LaunchedEffect(Unit) {
         while (true) {
             JarvisSttRouter.checkRealReachabilityWithHysteresis()
@@ -509,12 +568,65 @@ fun JarvisListeningAndWakeScreen(
         }
     }
 
-    fun speakSentencesStreaming(fullText: String) {
-        val tts = ttsEngine ?: return
+    val speechRecognizer = remember {
+        if (SpeechRecognizer.isRecognitionAvailable(context)) {
+            SpeechRecognizer.createSpeechRecognizer(context)
+        } else null
+    }
+
+    /**
+     * Safely pauses the 16kHz AudioRecord stream FIRST, then launches SpeechRecognizer
+     * so Xiaomi Pad 6 never hits a microphone lock conflict!
+     */
+    fun launchCleanSttTurn(triggerSource: String = "MANUAL") {
+        scope.launch {
+            if (isJarvisSpeaking) {
+                ttsEngine?.stop()
+                isJarvisSpeaking = false
+            }
+            // 1. Release AudioRecord hardware lock first
+            SharedMicAndWakeManager.pauseStreamForSpeechTurn()
+
+            // 2. Start Android SpeechRecognizer on Main Thread
+            isSttActivelyListening = true
+            livePartialTranscript = "🎙️ Listening now ($triggerSource)... Speak your command, sir!"
+
+            val preferOffline = when (JarvisSttRouter.selectedMode) {
+                SttEngineMode.OFFLINE_ON_DEVICE -> true
+                SttEngineMode.ONLINE_GOOGLE_NEET -> false
+                SttEngineMode.AUTO_HYBRID -> !JarvisSttRouter.isNetworkReachable || forceOffline
+            }
+            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, JarvisSttRouter.selectedLanguage.code)
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, preferOffline)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1800L)
+            }
+            runCatching {
+                speechRecognizer?.cancel()
+                speechRecognizer?.startListening(intent)
+            }.onFailure { err ->
+                isSttActivelyListening = false
+                SharedMicAndWakeManager.lastTriggerLog = "STT launch error: ${err.message}"
+                SharedMicAndWakeManager.resumeStreamAfterSpeechTurn(context)
+            }
+        }
+    }
+
+    fun speakSentencesAndResumeMic(fullText: String) {
+        val tts = ttsEngine
+        if (tts == null) {
+            SharedMicAndWakeManager.resumeStreamAfterSpeechTurn(context)
+            return
+        }
         tts.stop()
         val clean = fullText.replace("*", "").trim()
-        val sentences = clean.split(Regex("(?<=[.!?])\\s+")).filter { it.isNotBlank() }
-        if (sentences.isEmpty()) return
+        val sentences = clean.split(Regex("(?<=[.!?])\\s+")).filter { it.isNotBlank() }.take(4)
+        if (sentences.isEmpty()) {
+            SharedMicAndWakeManager.resumeStreamAfterSpeechTurn(context)
+            return
+        }
 
         isJarvisSpeaking = true
         tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
@@ -524,11 +636,22 @@ fun JarvisListeningAndWakeScreen(
             override fun onDone(utteranceId: String?) {
                 if (utteranceId == "utt_${sentences.lastIndex}") {
                     isJarvisSpeaking = false
+                    scope.launch(Dispatchers.Main) {
+                        if (isContinuousConvo) {
+                            delay(400L)
+                            launchCleanSttTurn("CONTINUOUS")
+                        } else {
+                            // Automatically re-arm the Double-Clap & Wake-Word stream!
+                            SharedMicAndWakeManager.lastTriggerLog = "✓ Reply finished — Shared Mic Stream re-armed for Double-Clap or 'Jarvis'!"
+                            SharedMicAndWakeManager.resumeStreamAfterSpeechTurn(context)
+                        }
+                    }
                 }
             }
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) {
                 isJarvisSpeaking = false
+                SharedMicAndWakeManager.resumeStreamAfterSpeechTurn(context)
             }
         })
 
@@ -538,58 +661,54 @@ fun JarvisListeningAndWakeScreen(
         }
     }
 
-    // Android SpeechRecognizer with Online/Offline STT Router + Wake-Word ("Jarvis") + Barge-In
-    val speechRecognizer = remember {
-        if (SpeechRecognizer.isRecognitionAvailable(context)) {
-            SpeechRecognizer.createSpeechRecognizer(context)
-        } else null
-    }
-
-    fun startSttListeningPass(forBenchmark: Boolean = false) {
-        // BARGE-IN: immediately silence Jarvis if he is currently speaking
-        if (isJarvisSpeaking) {
-            ttsEngine?.stop()
-            isJarvisSpeaking = false
-        }
-        val preferOffline = when (JarvisSttRouter.selectedMode) {
-            SttEngineMode.OFFLINE_ON_DEVICE -> true
-            SttEngineMode.ONLINE_GOOGLE_NEET -> false
-            SttEngineMode.AUTO_HYBRID -> !JarvisSttRouter.isNetworkReachable || forceOffline
-        }
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, JarvisSttRouter.selectedLanguage.code)
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, preferOffline)
-        }
-        runCatching {
-            speechRecognizer?.startListening(intent)
-        }
-    }
-
     DisposableEffect(speechRecognizer) {
-        SharedMicAndWakeManager.onWakeActivatedCallback = {
-            startSttListeningPass(forBenchmark = false)
+        SharedMicAndWakeManager.onWakeActivatedCallback = { triggerType ->
+            launchCleanSttTurn(triggerSource = triggerType)
         }
 
         val listener = object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) = Unit
+            override fun onReadyForSpeech(params: Bundle?) {
+                isSttActivelyListening = true
+                SharedMicAndWakeManager.lastTriggerLog = "🎙️ MIC OPEN — Speak your question or say 'Jarvis, ...' now!"
+            }
+
             override fun onBeginningOfSpeech() {
-                // Barge-in if user starts talking while TTS is speaking
+                isSttActivelyListening = true
                 if (isJarvisSpeaking) {
                     ttsEngine?.stop()
                     isJarvisSpeaking = false
                 }
             }
-            override fun onRmsChanged(rmsdB: Float) = Unit
+
+            override fun onRmsChanged(rmsdB: Float) {
+                val norm = ((rmsdB + 2f) / 12f).coerceIn(0.05f, 1.0f)
+                SharedMicAndWakeManager.livePeakNormalized = norm
+                SharedMicAndWakeManager.liveMicDb = (-50f + norm * 45f)
+            }
+
             override fun onBufferReceived(buffer: ByteArray?) = Unit
-            override fun onEndOfSpeech() = Unit
+
+            override fun onEndOfSpeech() {
+                isSttActivelyListening = false
+                SharedMicAndWakeManager.lastTriggerLog = "Processing speech..."
+            }
+
             override fun onError(error: Int) {
+                isSttActivelyListening = false
+                val errName = when (error) {
+                    SpeechRecognizer.ERROR_NO_MATCH -> "No speech heard — re-arming Double-Clap & Wake listener"
+                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Speech timeout — re-arming Double-Clap & Wake listener"
+                    SpeechRecognizer.ERROR_AUDIO -> "Audio hand-off retry"
+                    else -> "STT code $error — re-arming listener"
+                }
+                SharedMicAndWakeManager.lastTriggerLog = errName
                 if (isContinuousConvo) {
                     scope.launch {
-                        delay(450L)
-                        startSttListeningPass()
+                        delay(600L)
+                        launchCleanSttTurn("CONTINUOUS")
                     }
+                } else {
+                    SharedMicAndWakeManager.resumeStreamAfterSpeechTurn(context)
                 }
             }
 
@@ -597,7 +716,6 @@ fun JarvisListeningAndWakeScreen(
                 val part = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
                 if (part.isNotBlank()) {
                     livePartialTranscript = part
-                    // Barge-in on partial speech detection
                     if (isJarvisSpeaking) {
                         ttsEngine?.stop()
                         isJarvisSpeaking = false
@@ -606,30 +724,52 @@ fun JarvisListeningAndWakeScreen(
             }
 
             override fun onResults(results: Bundle?) {
+                isSttActivelyListening = false
                 val heard = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty().trim()
-                if (heard.isBlank()) return
-                livePartialTranscript = addAutoPunctuationAndNeetBoost(heard)
+                if (heard.isBlank()) {
+                    SharedMicAndWakeManager.resumeStreamAfterSpeechTurn(context)
+                    return
+                }
+                val boosted = addAutoPunctuationAndNeetBoost(heard)
+                livePartialTranscript = boosted
 
-                // Check if running 20-phrase NEET benchmark
+                // 1. Check if user is testing the 20-Phrase NEET Benchmark
                 if (showBenchmarkList && activeBenchmarkIdx in benchmarkPhrases.indices) {
                     val item = benchmarkPhrases[activeBenchmarkIdx]
-                    val score = JarvisSttRouter.computePhraseAccuracy(item.expectedPhrase, livePartialTranscript)
+                    val score = JarvisSttRouter.computePhraseAccuracy(item.expectedPhrase, boosted)
                     benchmarkPhrases[activeBenchmarkIdx] = item.copy(
-                        lastHeardText = livePartialTranscript,
+                        lastHeardText = boosted,
                         accuracyPercent = score,
                         testedEngine = JarvisSttRouter.activeLiveEngineBadge
                     )
+                    SharedMicAndWakeManager.resumeStreamAfterSpeechTurn(context)
                     return
                 }
 
-                // Check if wake-word "Jarvis" was spoken
-                val lower = livePartialTranscript.lowercase()
+                // 2. Check if "Jarvis" wake word was spoken in the phrase
+                val lower = boosted.lowercase()
                 if (lower.contains("jarvis")) {
                     SharedMicAndWakeManager.totalWakeTriggers++
                     SharedMicAndWakeManager.playWakeActivationChime()
                 }
 
+                // If user only said "Jarvis." with no question yet, prompt them and listen immediately!
+                val strippedQuery = boosted.replace(Regex("^(hey\\s+)?jarvis[,.:!?\\s]*", RegexOption.IGNORE_CASE), "").trim()
+                if (strippedQuery.length <= 2) {
+                    val greeting = "At your service, sir. What would you like me to do?"
+                    lastSpokenReply = greeting
+                    SharedMicAndWakeManager.lastTriggerLog = "✓ Wake word 'Jarvis' heard! Asking for your command..."
+                    ttsEngine?.speak(greeting, TextToSpeech.QUEUE_FLUSH, null, "wake_prompt")
+                    scope.launch {
+                        delay(1900L)
+                        launchCleanSttTurn("JARVIS_FOLLOWUP")
+                    }
+                    return
+                }
+
+                // 3. Send spoken command to Jarvis Brain + Autonomous Tools + Speak Reply
                 val t0 = System.currentTimeMillis()
+                SharedMicAndWakeManager.lastTriggerLog = "⚡ Sending \"$strippedQuery\" to J.A.R.V.I.S. Brain..."
                 scope.launch {
                     val reply = JarvisBrainEngine.generateJarvisReply(
                         context = context,
@@ -639,14 +779,14 @@ fun JarvisListeningAndWakeScreen(
                         temperature = committedTemperature,
                         forceOffline = forceOffline,
                         conversation = messages.toList(),
-                        userQuery = livePartialTranscript
+                        userQuery = strippedQuery
                     )
                     firstWordLatencyMs = (System.currentTimeMillis() - t0).coerceAtLeast(120L)
                     messages.add(
                         ChatMessageItem(
                             id = System.currentTimeMillis() - 1,
                             role = "user",
-                            visibleText = livePartialTranscript,
+                            visibleText = boosted,
                             emotionTag = "focused",
                             engineBadge = JarvisSttRouter.activeLiveEngineBadge
                         )
@@ -654,12 +794,7 @@ fun JarvisListeningAndWakeScreen(
                     messages.add(reply)
                     EncryptedKeyStoreVault.saveChatHistory(context, messages)
                     lastSpokenReply = reply.visibleText
-                    speakSentencesStreaming(reply.visibleText)
-
-                    if (isContinuousConvo) {
-                        delay(1800L)
-                        startSttListeningPass()
-                    }
+                    speakSentencesAndResumeMic(reply.visibleText)
                 }
             }
 
@@ -706,13 +841,13 @@ fun JarvisListeningAndWakeScreen(
                     }
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Privacy Guarantee: ONE shared 16kHz mic stream on-device. 0 bytes leave your Xiaomi Pad 6 before 'Jarvis' or Double-Clap activation.",
+                        text = "Auto Mic Hand-Off Active: Double-Clap or Voice Wake automatically releases the DSP mic -> transcribes your speech -> answers aloud -> re-arms!",
                         color = palette.textPrimary,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = "Hardware DSP: Echo Canceler (Barge-In): ${if (SharedMicAndWakeManager.aecAvailable) "ACTIVE ✓" else " Ready"} • Noise Suppressor: ${if (SharedMicAndWakeManager.nsAvailable) "ACTIVE ✓" else "Ready"} • First-Word Latency: ${if (firstWordLatencyMs > 0) "${firstWordLatencyMs}ms" else "~1.2s target"}",
+                        text = "Hardware DSP: Echo Canceler (Barge-In): ${if (SharedMicAndWakeManager.aecAvailable) "ACTIVE ✓" else "Ready"} • Noise Suppressor: ${if (SharedMicAndWakeManager.nsAvailable) "ACTIVE ✓" else "Ready"} • First-Word Latency: ${if (firstWordLatencyMs > 0) "${firstWordLatencyMs}ms" else "~1.2s target"}",
                         color = palette.textSecondary,
                         fontSize = 11.sp
                     )
@@ -754,7 +889,7 @@ fun JarvisListeningAndWakeScreen(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "WAKE WORD ('JARVIS') + DOUBLE-CLAP CALIBRATION & FALSE-TRIGGER TEST",
+                        text = "WAKE WORD ('JARVIS') + DOUBLE-CLAP CALIBRATION & AUTO HAND-OFF",
                         color = JarvisSpatialPalettes.StatusWarning,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
@@ -762,10 +897,10 @@ fun JarvisListeningAndWakeScreen(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Picovoice Key: ${if (picovoiceKey.isNotBlank()) "Configured ✓" else "Using Built-In Zero-Key Local Wake + Double-Clap DSP"}",
-                        color = palette.textPrimary,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold
+                        text = "Status: ${if (isSttActivelyListening) "🎙️ LISTENING TO YOUR VOICE NOW..." else if (SharedMicAndWakeManager.isSharedStreamRunning) "GUARDING (Clap twice or say 'Jarvis')" else "Idle"}",
+                        color = if (isSttActivelyListening) JarvisSpatialPalettes.StatusSuccess else palette.textPrimary,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
                     )
                     Text(
                         text = SharedMicAndWakeManager.lastTriggerLog,
@@ -795,7 +930,7 @@ fun JarvisListeningAndWakeScreen(
             LinearProgressIndicator(
                 progress = { SharedMicAndWakeManager.livePeakNormalized },
                 modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
-                color = if (SharedMicAndWakeManager.livePeakNormalized > 0.55f) JarvisSpatialPalettes.StatusSuccess else JarvisSpatialPalettes.StatusWarning,
+                color = if (isSttActivelyListening || SharedMicAndWakeManager.livePeakNormalized > 0.45f) JarvisSpatialPalettes.StatusSuccess else JarvisSpatialPalettes.StatusWarning,
                 trackColor = Color.White.copy(alpha = 0.15f)
             )
 
@@ -805,14 +940,14 @@ fun JarvisListeningAndWakeScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 LiquidGlassButton(
-                    text = if (SharedMicAndWakeManager.isSharedStreamRunning) "Shared Mic Stream: ON ✓" else "1. Start Shared Mic Stream",
+                    text = if (SharedMicAndWakeManager.userWantsStreamArmed) "Shared Mic Stream: ON ✓" else "1. Start Shared Mic Stream",
                     icon = Icons.Default.Mic,
                     lab = lab,
-                    isActive = SharedMicAndWakeManager.isSharedStreamRunning,
-                    accentColor = if (SharedMicAndWakeManager.isSharedStreamRunning) JarvisSpatialPalettes.StatusSuccess else JarvisSpatialPalettes.StatusWarning,
+                    isActive = SharedMicAndWakeManager.userWantsStreamArmed,
+                    accentColor = if (SharedMicAndWakeManager.userWantsStreamArmed) JarvisSpatialPalettes.StatusSuccess else JarvisSpatialPalettes.StatusWarning,
                     onClick = {
-                        if (SharedMicAndWakeManager.isSharedStreamRunning) {
-                            SharedMicAndWakeManager.stopSharedMicStream()
+                        if (SharedMicAndWakeManager.userWantsStreamArmed) {
+                            SharedMicAndWakeManager.stopSharedMicStreamCompletely()
                         } else {
                             val hasPerm = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
                             if (hasPerm) SharedMicAndWakeManager.startSharedMicStream(context)
@@ -839,7 +974,7 @@ fun JarvisListeningAndWakeScreen(
                     }
                 )
                 LiquidGlassButton(
-                    text = if ( isContinuousConvo) "Continuous + Barge-In: ON ✓" else "3. Start Continuous Voice",
+                    text = if (isContinuousConvo) "Continuous 'Jarvis' Mode: ON ✓" else "3. Start Continuous Voice",
                     icon = Icons.Default.GraphicEq,
                     lab = lab,
                     isActive = isContinuousConvo,
@@ -847,9 +982,11 @@ fun JarvisListeningAndWakeScreen(
                     onClick = {
                         isContinuousConvo = !isContinuousConvo
                         if (isContinuousConvo) {
-                            startSttListeningPass()
+                            launchCleanSttTurn("CONTINUOUS")
                         } else {
-                            speechRecognizer?.stopListening()
+                            speechRecognizer?.cancel()
+                            isSttActivelyListening = false
+                            SharedMicAndWakeManager.resumeStreamAfterSpeechTurn(context)
                         }
                     }
                 )
@@ -888,14 +1025,14 @@ fun JarvisListeningAndWakeScreen(
                 }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Trigger Cooldown (${"%.1f".format(SharedMicAndWakeManager.cooldownSeconds)}s)",
+                        text = "Voice Wake Sensitivity (${(SharedMicAndWakeManager.wakeSensitivity * 100).toInt()}%)",
                         color = Color.White,
                         fontSize = 11.sp
                     )
                     Slider(
-                        value = SharedMicAndWakeManager.cooldownSeconds,
-                        onValueChange = { SharedMicAndWakeManager.cooldownSeconds = it },
-                        valueRange = 1.0f..6.0f,
+                        value = SharedMicAndWakeManager.wakeSensitivity,
+                        onValueChange = { SharedMicAndWakeManager.wakeSensitivity = it },
+                        valueRange = 0.25f..0.95f,
                         colors = SliderDefaults.colors(
                             thumbColor = Color.White,
                             activeTrackColor = JarvisSpatialPalettes.StatusWarning
@@ -922,13 +1059,13 @@ fun JarvisListeningAndWakeScreen(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = if (livePartialTranscript.isBlank()) "Heard: (Speak now or double-clap...)" else "Heard: \"$livePartialTranscript\"",
+                        text = if (livePartialTranscript.isBlank()) "Heard: (Double-clap, say 'Jarvis', or tap Listen Now...)" else "Heard: \"$livePartialTranscript\"",
                         color = JarvisSpatialPalettes.StatusWarning,
                         fontFamily = FontFamily.Monospace,
-                        fontSize = 13.sp,
+                        fontSize = 14.sp,
                         fontWeight = FontWeight.Bold
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
                     Text(
                         text = lastSpokenReply,
                         color = palette.textPrimary,
@@ -938,11 +1075,12 @@ fun JarvisListeningAndWakeScreen(
                 }
                 Spacer(modifier = Modifier.width(10.dp))
                 LiquidGlassButton(
-                    text = if (isJarvisSpeaking) "Barge-In (Interrupt)" else "Listen Once",
+                    text = if (isJarvisSpeaking) "Barge-In (Stop)" else if (isSttActivelyListening) "Listening..." else "Listen Now",
                     icon = Icons.Default.Bolt,
                     lab = lab,
+                    isActive = isSttActivelyListening,
                     accentColor = if (isJarvisSpeaking) JarvisSpatialPalettes.StatusError else JarvisSpatialPalettes.StatusSuccess,
-                    onClick = { startSttListeningPass(forBenchmark = false) }
+                    onClick = { launchCleanSttTurn(triggerSource = "BUTTON") }
                 )
             }
         }
@@ -1020,7 +1158,7 @@ fun JarvisListeningAndWakeScreen(
                                 icon = Icons.Default.Mic,
                                 lab = lab,
                                 accentColor = JarvisSpatialPalettes.StatusSuccess,
-                                onClick = { startSttListeningPass(forBenchmark = true) }
+                                onClick = { launchCleanSttTurn(triggerSource = "BENCHMARK_#${currentPhrase.id}") }
                             )
                             LiquidGlassButton(
                                 text = "Next Phrase ▶",
