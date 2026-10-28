@@ -77,11 +77,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.jarvis.neet2027.model.NeetPlanRoot
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.PI
-import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.sin
@@ -93,7 +93,6 @@ enum class OrbChromaMode(val label: String) {
     EMERALD_GREEN("Emerald Green")
 }
 
-// 1. Inner Core Tangled Great-Circle Wireframe Loops (matches the dense woven core in the video)
 private data class CoreWireLoop3D(
     val rotX: Float,
     val rotY: Float,
@@ -104,9 +103,8 @@ private data class CoreWireLoop3D(
     val isYellowSeed: Boolean
 )
 
-// 2. Steeply Tilted Gyroscopic Saturn-like Particle Ring Particle
 private data class GyroRingParticle3D(
-    val ringIndex: Int, // 0 = Steeply tilted ring (~62 deg), 1 = Cross-equatorial ring (~-22 deg)
+    val ringIndex: Int,
     val angleRad: Float,
     val radialSpread: Float,
     val zThickness: Float,
@@ -115,7 +113,6 @@ private data class GyroRingParticle3D(
     val isYellowSeed: Boolean
 )
 
-// 3. Outer Broken Tectonic Circuit-Trace Shell Segment
 private data class TectonicCircuitSegment3D(
     val theta1: Float,
     val phi1: Float,
@@ -150,11 +147,16 @@ fun JarvisLiveParticleOrbPage(
     var lastJarvisSpoken by remember {
         mutableStateOf(
             messages.lastOrNull { it.role == "jarvis" }?.visibleText
-                ?: "At your service, sir. Tap the 3D hologram orb or the microphone button to converse live, even in split-screen."
+                ?: "Double-clap anywhere (or tap the 3D Orb) to start Gemini Live. Speak naturally and interrupt me anytime, sir."
         )
     }
     var lastEmotion by remember { mutableStateOf("calm") }
     var textDraft by remember { mutableStateOf("") }
+
+    // Tracks whether we are in an active hands-free Gemini Live continuous conversation
+    var isLiveSessionActive by remember { mutableStateOf(false) }
+    var consecutiveSilenceCount by remember { mutableIntStateOf(0) }
+    var lastHandledWakeTick by remember { mutableIntStateOf(0) }
 
     var ttsEngine by remember { mutableStateOf<TextToSpeech?>(null) }
     DisposableEffect(context) {
@@ -163,7 +165,7 @@ fun JarvisLiveParticleOrbPage(
             if (status == TextToSpeech.SUCCESS) {
                 engine?.language = Locale.UK
                 engine?.setPitch(0.88f)
-                engine?.setSpeechRate(1.02f)
+                engine?.setSpeechRate(1.05f)
             }
         }
         ttsEngine = engine
@@ -173,7 +175,19 @@ fun JarvisLiveParticleOrbPage(
         }
     }
 
-    // Dynamic multi-frequency acoustic pulsation when Jarvis speaks or thinks
+    val speechRecognizer = remember {
+        if (SpeechRecognizer.isRecognitionAvailable(context)) {
+            SpeechRecognizer.createSpeechRecognizer(context)
+        } else null
+    }
+
+    // Dynamic acoustic pulsation for the 3D hologram particles
+    LaunchedEffect(orbMode, SharedMicAndWakeManager.livePeakNormalized) {
+        if (orbMode == VoiceOrbState.IDLE) {
+            liveSoundLevel = SharedMicAndWakeManager.livePeakNormalized.coerceAtLeast(0.08f)
+        }
+    }
+
     LaunchedEffect(orbMode) {
         while (orbMode == VoiceOrbState.SPEAKING || orbMode == VoiceOrbState.THINKING) {
             liveSoundLevel = if (orbMode == VoiceOrbState.SPEAKING) {
@@ -183,16 +197,169 @@ fun JarvisLiveParticleOrbPage(
             }
             delay(55L)
         }
-        if (orbMode == VoiceOrbState.IDLE) {
-            liveSoundLevel = 0.08f
+    }
+
+    fun stopGeminiLiveAndRearmClap(statusNote: String = "Gemini Live paused — Double-Clap anytime to wake!") {
+        isLiveSessionActive = false
+        consecutiveSilenceCount = 0
+        SharedMicAndWakeManager.stopBargeInMonitor()
+        runCatching { speechRecognizer?.cancel() }
+        ttsEngine?.stop()
+        orbMode = VoiceOrbState.IDLE
+        SharedMicAndWakeManager.lastTriggerLog = statusNote
+        SharedMicAndWakeManager.endGeminiLiveAndRearmClapGuard(context)
+    }
+
+    fun startGeminiLiveListeningTurn(sourceTag: String = "LIVE") {
+        scope.launch {
+            isLiveSessionActive = true
+            SharedMicAndWakeManager.isGeminiLiveSessionActive = true
+            SharedMicAndWakeManager.stopBargeInMonitor()
+            ttsEngine?.stop()
+
+            // Release AudioRecord hardware lock first so SpeechRecognizer never conflicts
+            SharedMicAndWakeManager.pauseStreamForSpeechTurn()
+
+            orbMode = VoiceOrbState.LISTENING
+            liveTranscript = "🎙️ Listening ($sourceTag)... Speak now, sir"
+
+            val preferOffline = when (JarvisSttRouter.selectedMode) {
+                SttEngineMode.OFFLINE_ON_DEVICE -> true
+                SttEngineMode.ONLINE_GOOGLE_NEET -> false
+                SttEngineMode.AUTO_HYBRID -> !JarvisSttRouter.isNetworkReachable || forceOffline
+            }
+            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, JarvisSttRouter.selectedLanguage.code)
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, preferOffline)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
+            }
+            runCatching {
+                speechRecognizer?.cancel()
+                speechRecognizer?.startListening(intent)
+            }.onFailure {
+                stopGeminiLiveAndRearmClap("Mic hand-off retry — Double-Clap to wake.")
+            }
         }
     }
 
-    fun speakAndSendQuery(queryText: String) {
-        val clean = queryText.trim()
+    fun speakWithBargeInAndAutoLoop(replyText: String, emotionTag: String, isDetailedRequested: Boolean) {
+        val tts = ttsEngine
+        if (tts == null) {
+            if (isLiveSessionActive) startGeminiLiveListeningTurn("AUTO_LOOP")
+            else stopGeminiLiveAndRearmClap()
+            return
+        }
+        tts.stop()
+
+        when (emotionTag) {
+            "urgent", "focused" -> {
+                tts.setPitch(0.92f)
+                tts.setSpeechRate(1.08f)
+            }
+            "concerned" -> {
+                tts.setPitch(0.85f)
+                tts.setSpeechRate(0.98f)
+            }
+            else -> {
+                tts.setPitch(0.88f)
+                tts.setSpeechRate(1.05f)
+            }
+        }
+
+        // Format for natural Gemini Live conversation: 1-3 crisp sentences unless user asked for detail
+        val clean = replyText.replace("*", "").replace("#", "").trim()
+        val allSentences = clean.split(Regex("(?<=[.!?])\\s+")).filter { it.isNotBlank() }
+        val spokenSentences = if (isDetailedRequested) {
+            allSentences.take(8)
+        } else {
+            allSentences.take(3)
+        }
+
+        if (spokenSentences.isEmpty()) {
+            if (isLiveSessionActive) startGeminiLiveListeningTurn("AUTO_LOOP")
+            else stopGeminiLiveAndRearmClap()
+            return
+        }
+
+        orbMode = VoiceOrbState.SPEAKING
+
+        // Start Real-Time Voice & Clap Barge-In Monitor while Jarvis speaks!
+        SharedMicAndWakeManager.startBargeInMonitorDuringTts(context) { interruptReason ->
+            // User spoke over Jarvis or double-clapped mid-sentence -> cut TTS immediately & listen!
+            tts.stop()
+            SharedMicAndWakeManager.playWakeActivationChime()
+            startGeminiLiveListeningTurn(interruptReason)
+        }
+
+        tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            override fun onStart(utteranceId: String?) {
+                orbMode = VoiceOrbState.SPEAKING
+            }
+
+            override fun onDone(utteranceId: String?) {
+                if (utteranceId == "live_utt_${spokenSentences.lastIndex}") {
+                    SharedMicAndWakeManager.stopBargeInMonitor()
+                    scope.launch(Dispatchers.Main) {
+                        if (isLiveSessionActive) {
+                            // Gemini Live continuous turn-taking: immediately listen for user's next reply!
+                            delay(220L)
+                            startGeminiLiveListeningTurn("GEMINI_LIVE_LOOP")
+                        } else {
+                            stopGeminiLiveAndRearmClap()
+                        }
+                    }
+                }
+            }
+
+            @Deprecated("Deprecated in Java")
+            override fun onError(utteranceId: String?) {
+                SharedMicAndWakeManager.stopBargeInMonitor()
+                scope.launch(Dispatchers.Main) {
+                    if (isLiveSessionActive) {
+                        delay(300L)
+                        startGeminiLiveListeningTurn("RETRY")
+                    } else {
+                        stopGeminiLiveAndRearmClap()
+                    }
+                }
+            }
+        })
+
+        spokenSentences.forEachIndexed { idx, sentence ->
+            val mode = if (idx == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
+            tts.speak(sentence, mode, null, "live_utt_$idx")
+        }
+    }
+
+    fun processUserQueryInGeminiLive(rawQuery: String) {
+        val clean = rawQuery.trim()
         if (clean.isEmpty()) return
+
+        val lower = clean.lowercase()
+        // Voice command to exit Gemini Live continuous loop
+        if (lower == "stop" || lower == "stop listening" || lower == "exit" || lower == "pause" || lower == "goodbye" || lower == "bye jarvis") {
+            lastJarvisSpoken = "Standing by, sir. Double-clap anytime you need me."
+            ttsEngine?.speak(lastJarvisSpoken, TextToSpeech.QUEUE_FLUSH, null, "goodbye_utt")
+            stopGeminiLiveAndRearmClap("Standing by — Double-Clap anytime to wake!")
+            return
+        }
+
+        val wantsDetailed = lower.contains("detail") || lower.contains("elaborate") ||
+            lower.contains("in depth") || lower.contains("step by step") || lower.contains("derive")
+
+        // Prompt instruction so Jarvis speaks like Gemini Live (short, punchy, conversational) unless asked for detail
+        val liveConversationalQuery = if (wantsDetailed) {
+            clean
+        } else {
+            "$clean (Reply in 1 to 2 natural, conversational spoken sentences like Gemini Live so we can chat back and forth quickly.)"
+        }
+
         liveTranscript = clean
         orbMode = VoiceOrbState.THINKING
+        SharedMicAndWakeManager.stopBargeInMonitor()
+
         scope.launch {
             val reply = JarvisBrainEngine.generateJarvisReply(
                 context = context,
@@ -202,7 +369,7 @@ fun JarvisLiveParticleOrbPage(
                 temperature = committedTemperature,
                 forceOffline = forceOffline,
                 conversation = messages.toList(),
-                userQuery = clean
+                userQuery = liveConversationalQuery
             )
             messages.add(
                 ChatMessageItem(
@@ -210,56 +377,20 @@ fun JarvisLiveParticleOrbPage(
                     role = "user",
                     visibleText = clean,
                     emotionTag = "focused",
-                    engineBadge = "LIVE VOICE"
+                    engineBadge = "GEMINI LIVE"
                 )
             )
             messages.add(reply)
             EncryptedKeyStoreVault.saveChatHistory(context, messages)
             lastJarvisSpoken = reply.visibleText
             lastEmotion = reply.emotionTag
-            orbMode = VoiceOrbState.SPEAKING
 
-            val tts = ttsEngine
-            if (tts != null) {
-                when (reply.emotionTag) {
-                    "urgent", "focused" -> {
-                        tts.setPitch(0.92f)
-                        tts.setSpeechRate(1.08f)
-                    }
-                    "concerned" -> {
-                        tts.setPitch(0.84f)
-                        tts.setSpeechRate(0.95f)
-                    }
-                    else -> {
-                        tts.setPitch(0.88f)
-                        tts.setSpeechRate(1.02f)
-                    }
-                }
-                tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                    override fun onStart(utteranceId: String?) {
-                        orbMode = VoiceOrbState.SPEAKING
-                    }
-                    override fun onDone(utteranceId: String?) {
-                        orbMode = VoiceOrbState.IDLE
-                    }
-                    @Deprecated("Deprecated in Java")
-                    override fun onError(utteranceId: String?) {
-                        orbMode = VoiceOrbState.IDLE
-                    }
-                })
-                val spokenShort = reply.visibleText.replace("*", "").take(360)
-                tts.speak(spokenShort, TextToSpeech.QUEUE_FLUSH, null, "jarvis_live_utt")
-            } else {
-                delay(2800L)
-                orbMode = VoiceOrbState.IDLE
-            }
+            speakWithBargeInAndAutoLoop(
+                replyText = reply.visibleText,
+                emotionTag = reply.emotionTag,
+                isDetailedRequested = wantsDetailed
+            )
         }
-    }
-
-    val speechRecognizer = remember {
-        if (SpeechRecognizer.isRecognitionAvailable(context)) {
-            SpeechRecognizer.createSpeechRecognizer(context)
-        } else null
     }
 
     DisposableEffect(speechRecognizer) {
@@ -267,64 +398,110 @@ fun JarvisLiveParticleOrbPage(
             override fun onReadyForSpeech(params: Bundle?) {
                 orbMode = VoiceOrbState.LISTENING
             }
+
             override fun onBeginningOfSpeech() {
                 orbMode = VoiceOrbState.LISTENING
+                consecutiveSilenceCount = 0
             }
+
             override fun onRmsChanged(rmsdB: Float) {
                 val normalized = ((rmsdB + 2f) / 11f).coerceIn(0.08f, 1.0f)
                 liveSoundLevel = normalized
+                SharedMicAndWakeManager.livePeakNormalized = normalized
+                SharedMicAndWakeManager.liveMicDb = (-50f + normalized * 45f)
             }
+
             override fun onBufferReceived(buffer: ByteArray?) = Unit
+
             override fun onEndOfSpeech() {
                 if (orbMode == VoiceOrbState.LISTENING) {
                     orbMode = VoiceOrbState.THINKING
                 }
             }
+
             override fun onError(error: Int) {
-                orbMode = VoiceOrbState.IDLE
-            }
-            override fun onResults(results: Bundle?) {
-                val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                val heard = matches?.firstOrNull().orEmpty()
-                if (heard.isNotBlank()) {
-                    speakAndSendQuery(heard)
+                if (isLiveSessionActive) {
+                    consecutiveSilenceCount++
+                    // If user stays silent for 2 consecutive turns, gracefully pause Gemini Live and re-arm Double-Clap!
+                    if (consecutiveSilenceCount >= 2) {
+                        stopGeminiLiveAndRearmClap("No speech detected — Re-armed Double-Clap Guardian.")
+                    } else {
+                        scope.launch {
+                            delay(350L)
+                            if (isLiveSessionActive) {
+                                startGeminiLiveListeningTurn("CONTINUE_LISTEN")
+                            }
+                        }
+                    }
                 } else {
-                    orbMode = VoiceOrbState.IDLE
+                    stopGeminiLiveAndRearmClap()
                 }
             }
+
             override fun onPartialResults(partialResults: Bundle?) {
                 val part = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
                 if (part.isNotBlank()) {
                     liveTranscript = part
                 }
             }
+
+            override fun onResults(results: Bundle?) {
+                val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                val heard = matches?.firstOrNull().orEmpty().trim()
+                if (heard.isNotBlank()) {
+                    consecutiveSilenceCount = 0
+                    processUserQueryInGeminiLive(heard)
+                } else if (isLiveSessionActive) {
+                    consecutiveSilenceCount++
+                    if (consecutiveSilenceCount >= 2) {
+                        stopGeminiLiveAndRearmClap("Paused after silence — Double-Clap anytime to wake!")
+                    } else {
+                        startGeminiLiveListeningTurn("LISTEN_AGAIN")
+                    }
+                } else {
+                    stopGeminiLiveAndRearmClap()
+                }
+            }
+
             override fun onEvent(eventType: Int, params: Bundle?) = Unit
         }
         speechRecognizer?.setRecognitionListener(listener)
         onDispose {
+            SharedMicAndWakeManager.stopBargeInMonitor()
             speechRecognizer?.destroy()
-        }
-    }
-
-    fun triggerVoiceListening() {
-        ttsEngine?.stop()
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN")
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-        }
-        runCatching {
-            orbMode = VoiceOrbState.LISTENING
-            speechRecognizer?.startListening(intent)
-        }.onFailure {
-            orbMode = VoiceOrbState.IDLE
+            // Ensure Double-Clap Guardian is re-armed if user navigates away from Live Orb
+            SharedMicAndWakeManager.endGeminiLiveAndRearmClapGuard(context)
         }
     }
 
     val micPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (granted) triggerVoiceListening()
+        if (granted) {
+            startGeminiLiveListeningTurn("MIC_GRANTED")
+        }
+    }
+
+    // Ensure Double-Clap Guardian is armed when sitting idle on Live Orb
+    LaunchedEffect(Unit) {
+        if (SharedMicAndWakeManager.userWantsStreamArmed && !SharedMicAndWakeManager.isGeminiLiveSessionActive) {
+            SharedMicAndWakeManager.startSharedMicStream(context)
+        }
+    }
+
+    // OBSERVE UNIVERSAL DOUBLE-CLAP EVENT TICK:
+    // Whenever you Double-Clap on ANY tab (or on Live Orb itself), this fires immediately!
+    val currentWakeTick = SharedMicAndWakeManager.liveOrbWakeEventTick
+    LaunchedEffect(currentWakeTick) {
+        if (currentWakeTick > 0 && currentWakeTick != lastHandledWakeTick) {
+            lastHandledWakeTick = currentWakeTick
+            val hasMic = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+            if (hasMic) {
+                startGeminiLiveListeningTurn("DOUBLE_CLAP_WAKE")
+            } else {
+                micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            }
+        }
     }
 
     val primaryAccent = when (chromaMode) {
@@ -338,7 +515,6 @@ fun JarvisLiveParticleOrbPage(
         OrbChromaMode.EMERALD_GREEN -> Color(0xFF34D399)
     }
 
-    // Split-Screen Adaptive Container: automatically scales height & layout for Xiaomi Pad 6 Split-Screen
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         val isCompactSplitScreen = maxWidth < 560.dp || maxHeight < 520.dp
         val containerHeight = if (isCompactSplitScreen) 520.dp else 680.dp
@@ -370,7 +546,7 @@ fun JarvisLiveParticleOrbPage(
                     shape = RoundedCornerShape(28.dp)
                 )
         ) {
-            // 1. Exact 3D Hologram Orb from Video (Tangled Core + 2 Precessing Rings + Broken Circuit Shell)
+            // 1. Exact 3D Hologram Orb from Video (Green & Yellow Sound-Reactive Particles)
             VideoHologram3DOrbCanvas(
                 orbState = orbMode,
                 chromaMode = chromaMode,
@@ -379,19 +555,21 @@ fun JarvisLiveParticleOrbPage(
                 isCompact = isCompactSplitScreen,
                 onTapOrb = {
                     val hasMic = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-                    if (orbMode == VoiceOrbState.LISTENING) {
-                        speechRecognizer?.stopListening()
-                        orbMode = VoiceOrbState.IDLE
-                    } else if (hasMic) {
-                        triggerVoiceListening()
-                    } else {
+                    if (!hasMic) {
                         micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    } else if (orbMode == VoiceOrbState.SPEAKING) {
+                        // Tapping orb while Jarvis speaks barges in immediately!
+                        startGeminiLiveListeningTurn("ORB_BARGE_IN")
+                    } else if (isLiveSessionActive || orbMode == VoiceOrbState.LISTENING) {
+                        stopGeminiLiveAndRearmClap("Stopped by tap — Double-Clap anytime to wake!")
+                    } else {
+                        startGeminiLiveListeningTurn("ORB_TAP")
                     }
                 },
                 modifier = Modifier.fillMaxSize()
             )
 
-            // 2. Top Adaptive Header Bar (Scrollable in Split-Screen so buttons never clip)
+            // 2. Top Adaptive Header Bar with Live dBFS, Clap Counter & Barge-In Status
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -407,7 +585,7 @@ fun JarvisLiveParticleOrbPage(
                         Box(modifier = Modifier.size(9.dp).clip(CircleShape).background(secondaryAccent))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "J.A.R.V.I.S. 3D HOLOGRAM ORB // ${chromaMode.label.uppercase()}",
+                            text = "J.A.R.V.I.S. GEMINI LIVE ORB // ${if (isLiveSessionActive) "LIVE AUTO-LOOP + BARGE-IN ON" else "DOUBLE-CLAP GUARD ARMED"}",
                             color = Color.White,
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.ExtraBold,
@@ -415,7 +593,7 @@ fun JarvisLiveParticleOrbPage(
                         )
                     }
                     Text(
-                        text = "State: ${orbMode.name} • Prosody: ${lastEmotion.uppercase()} • Sound Reactive",
+                        text = "State: ${orbMode.name} • Mic: ${"%.1f".format(SharedMicAndWakeManager.liveMicDb)} dBFS • Claps: ${SharedMicAndWakeManager.totalClapTriggers} • Barge-Ins: ${SharedMicAndWakeManager.totalBargeInTriggers}",
                         color = secondaryAccent,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium
@@ -425,7 +603,7 @@ fun JarvisLiveParticleOrbPage(
                 Spacer(modifier = Modifier.width(12.dp))
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    // 1-Tap Colour Mode Toggle (Green+Yellow / Solar Yellow / Emerald Green)
+                    // 1-Tap Colour Mode Toggle
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(14.dp))
@@ -444,24 +622,41 @@ fun JarvisLiveParticleOrbPage(
                         }
                     }
 
-                    // Live Mic Button
+                    // Start / End Gemini Live Button
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(14.dp))
-                            .background(primaryAccent.copy(alpha = 0.25f))
-                            .border(1.2.dp, primaryAccent, RoundedCornerShape(14.dp))
+                            .background(
+                                if (isLiveSessionActive) Color(0xFFF43F5E).copy(alpha = 0.28f)
+                                else primaryAccent.copy(alpha = 0.25f)
+                            )
+                            .border(
+                                width = 1.2.dp,
+                                color = if (isLiveSessionActive) Color(0xFFF43F5E) else primaryAccent,
+                                shape = RoundedCornerShape(14.dp)
+                            )
                             .clickable {
                                 val hasMic = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-                                if (hasMic) triggerVoiceListening()
-                                else micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                if (!hasMic) {
+                                    micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                } else if (isLiveSessionActive) {
+                                    stopGeminiLiveAndRearmClap("Ended Live Chat — Double-Clap anytime to wake!")
+                                } else {
+                                    startGeminiLiveListeningTurn("START_LIVE")
+                                }
                             }
                             .padding(horizontal = 12.dp, vertical = 8.dp)
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Mic, contentDescription = null, tint = primaryAccent, modifier = Modifier.size(15.dp))
+                            Icon(
+                                Icons.Default.Mic,
+                                contentDescription = null,
+                                tint = if (isLiveSessionActive) Color(0xFFF43F5E) else primaryAccent,
+                                modifier = Modifier.size(15.dp)
+                            )
                             Spacer(modifier = Modifier.width(5.dp))
                             Text(
-                                text = if (orbMode == VoiceOrbState.LISTENING) "Listening..." else "Speak",
+                                text = if (isLiveSessionActive) "End Live" else "Start Live",
                                 color = Color.White,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold
@@ -469,23 +664,31 @@ fun JarvisLiveParticleOrbPage(
                         }
                     }
 
-                    // Replay Butler Voice Button
+                    // Barge-In / Replay Voice Button
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(14.dp))
                             .background(Color(0xCC121417))
                             .border(1.dp, secondaryAccent.copy(alpha = 0.8f), RoundedCornerShape(14.dp))
                             .clickable {
-                                ttsEngine?.stop()
-                                orbMode = VoiceOrbState.SPEAKING
-                                ttsEngine?.speak(lastJarvisSpoken.take(320), TextToSpeech.QUEUE_FLUSH, null, "replay_utt")
+                                if (orbMode == VoiceOrbState.SPEAKING) {
+                                    startGeminiLiveListeningTurn("BARGE_IN_BUTTON")
+                                } else {
+                                    isLiveSessionActive = true
+                                    speakWithBargeInAndAutoLoop(lastJarvisSpoken, lastEmotion, isDetailedRequested = false)
+                                }
                             }
                             .padding(horizontal = 11.dp, vertical = 8.dp)
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.VolumeUp, contentDescription = null, tint = secondaryAccent, modifier = Modifier.size(15.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Replay", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = if (orbMode == VoiceOrbState.SPEAKING) "Interrupt" else "Replay",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                     }
                 }
@@ -551,7 +754,7 @@ fun JarvisLiveParticleOrbPage(
                     Box(modifier = Modifier.weight(1f)) {
                         if (textDraft.isEmpty()) {
                             Text(
-                                text = "Tap the 3D Orb to talk, or type to Jarvis...",
+                                text = "Double-clap anywhere to talk live, speak over Jarvis to interrupt, or type here...",
                                 color = Color(0xFF94A3B8),
                                 fontSize = 12.sp
                             )
@@ -575,7 +778,8 @@ fun JarvisLiveParticleOrbPage(
                                 if (textDraft.isNotBlank()) {
                                     val q = textDraft
                                     textDraft = ""
-                                    speakAndSendQuery(q)
+                                    isLiveSessionActive = true
+                                    processUserQueryInGeminiLive(q)
                                 }
                             }
                             .padding(horizontal = 12.dp, vertical = 7.dp)
@@ -602,7 +806,6 @@ private fun VideoHologram3DOrbCanvas(
     onTapOrb: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    // 1. Pre-compute 28 tangled 3D wireframe great-circle loops for the dense inner sphere (matches video center)
     val coreLoops = remember {
         val rng = Random(101)
         List(28) { idx ->
@@ -618,7 +821,6 @@ private fun VideoHologram3DOrbCanvas(
         }
     }
 
-    // 2. Pre-compute 460 particles for the two steeply tilted gyroscopic Saturn-like rings in the video
     val gyroRingParticles = remember {
         val rng = Random(202)
         List(460) { idx ->
@@ -635,7 +837,6 @@ private fun VideoHologram3DOrbCanvas(
         }
     }
 
-    // 3. Pre-compute 380 outer broken tectonic circuit-trace shell segments (with natural hemisphere gaps like the video)
     val outerShellSegments = remember {
         val rng = Random(303)
         val list = mutableListOf<TectonicCircuitSegment3D>()
@@ -645,10 +846,8 @@ private fun VideoHologram3DOrbCanvas(
             val theta = rng.nextFloat() * 2f * PI.toFloat()
             val phi = (rng.nextFloat() - 0.5f) * PI.toFloat()
 
-            // Tectonic patch mask: creates the exact crescent/polar shell openings seen in the uploaded video
             val patchWave = sin(theta * 2f + 0.5f) * cos(phi * 2.2f) + sin(phi * 1.6f)
             if (patchWave > -0.22f) {
-                // Orthogonal circuit-style step along theta or phi
                 val stepTheta = if (rng.nextBoolean()) (0.045f + rng.nextFloat() * 0.06f) else 0f
                 val stepPhi = if (stepTheta == 0f) (0.045f + rng.nextFloat() * 0.06f) else 0f
                 val t2 = theta + stepTheta
@@ -700,10 +899,10 @@ private fun VideoHologram3DOrbCanvas(
 
     val animatedAmp by animateFloatAsState(
         targetValue = when (orbState) {
-            VoiceOrbState.IDLE -> 0.08f
-            VoiceOrbState.LISTENING -> soundLevel.coerceAtLeast(0.30f)
-            VoiceOrbState.THINKING -> 0.44f
-            VoiceOrbState.SPEAKING -> soundLevel.coerceAtLeast(0.52f)
+            VoiceOrbState.IDLE -> soundLevel.coerceIn(0.06f, 0.25f)
+            VoiceOrbState.LISTENING -> soundLevel.coerceAtLeast(0.32f)
+            VoiceOrbState.THINKING -> 0.45f
+            VoiceOrbState.SPEAKING -> soundLevel.coerceAtLeast(0.54f)
         },
         animationSpec = spring(dampingRatio = 0.50f, stiffness = 400f),
         label = "orb_sound_amp"
@@ -753,15 +952,11 @@ private fun VideoHologram3DOrbCanvas(
             return base.copy(alpha = alpha)
         }
 
-        // Helper 3D Euler rotation + perspective projection
         fun project3D(x: Float, y: Float, z: Float, rx: Float, ry: Float, rz: Float): Triple<Float, Float, Float> {
-            // Rotate Z
             val x1 = x * cos(rz) - y * sin(rz)
             val y1 = x * sin(rz) + y * cos(rz)
-            // Rotate X
             val y2 = y1 * cos(rx) - z * sin(rx)
             val z2 = y1 * sin(rx) + z * cos(rx)
-            // Rotate Y
             val x3 = x1 * cos(ry) + z2 * sin(ry)
             val z3 = -x1 * sin(ry) + z2 * cos(ry)
 
@@ -770,7 +965,6 @@ private fun VideoHologram3DOrbCanvas(
             return Triple(cx + x3 * perspective, cy + y2 * perspective, depthNorm.coerceIn(0f, 1f))
         }
 
-        // Subtle atmospheric hologram glow behind the sphere on pitch-black space
         val glowHue = if (chromaMode == OrbChromaMode.SOLAR_YELLOW) yellowCore else emeraldCore
         drawCircle(
             brush = Brush.radialGradient(
@@ -789,9 +983,7 @@ private fun VideoHologram3DOrbCanvas(
         val globalRx = sin(spinPrecession) * 0.32f + (tilt.y * 0.03f)
         val globalRy = spinPrimary + (tilt.x * 0.03f)
 
-        // ====================================================================
-        // LAYER 1: DENSE TANGLED WIREFRAME INNER CORE SPHERE (Video Center)
-        // ====================================================================
+        // LAYER 1: DENSE TANGLED WIREFRAME INNER CORE SPHERE
         val coreSteps = 28
         coreLoops.forEach { loop ->
             var prevPt: Offset? = null
@@ -801,7 +993,6 @@ private fun VideoHologram3DOrbCanvas(
 
             for (step in 0..coreSteps) {
                 val u = (step.toFloat() / coreSteps) * (2f * PI.toFloat())
-                // Sound-reactive radial ripple along each core filament
                 val acousticWave = 1f + sin(u * loop.harmonicFreq + spinPrecession * 4f + loop.phaseOffset) * animatedAmp * 0.34f
                 val rCore = baseR * loop.radiusScale * acousticWave
 
@@ -830,15 +1021,12 @@ private fun VideoHologram3DOrbCanvas(
             }
         }
 
-        // ====================================================================
-        // LAYER 2: TWO STEEPLY TILTED GYROSCOPIC PARTICLE RINGS (Video Rings)
-        // ====================================================================
+        // LAYER 2: TWO STEEPLY TILTED GYROSCOPIC PARTICLE RINGS
         var prevRing0: Offset? = null
         var prevRing1: Offset? = null
 
         gyroRingParticles.forEachIndexed { idx, gp ->
             val isSteepRing = gp.ringIndex == 0
-            // Ring 0 tilts at ~62 degrees and precesses; Ring 1 tilts at ~-20 degrees and counter-precesses
             val ringTiltX = if (isSteepRing) {
                 1.08f + 0.22f * sin(spinPrecession)
             } else {
@@ -863,7 +1051,6 @@ private fun VideoHologram3DOrbCanvas(
             val pt = Offset(sx, sy)
             val col = pickColor(gp.isYellowSeed, depth, boost = 0.95f)
 
-            // Connect consecutive ring particles into a glowing braided particle belt
             if (isSteepRing) {
                 if (prevRing0 != null && idx % 2 == 0) {
                     drawLine(
@@ -894,15 +1081,12 @@ private fun VideoHologram3DOrbCanvas(
             )
         }
 
-        // ====================================================================
-        // LAYER 3: OUTER BROKEN TECTONIC CIRCUIT-TRACE SHELL (Video Crust)
-        // ====================================================================
+        // LAYER 3: OUTER BROKEN TECTONIC CIRCUIT-TRACE SHELL
         val shellRx = globalRx * 0.85f
         val shellRy = -globalRy * 0.75f
         val shellRz = sin(spinPrimary * 0.5f) * 0.25f
 
         outerShellSegments.forEach { seg ->
-            // Each outer shell particle & circuit trace reacts to voice/sound amplitude
             val pulse = 1f + sin(seg.harmonicSeed + spinPrecession * 6f) * animatedAmp * 0.28f
             val rShell = baseR * seg.radiusFactor * pulse
 
@@ -921,7 +1105,6 @@ private fun VideoHologram3DOrbCanvas(
             val p2 = Offset(sx2, sy2)
             val traceColor = pickColor(seg.isYellowSeed, depth1, boost = 0.90f)
 
-            // Draw circuit-trace segment on the spherical crust
             drawLine(
                 color = traceColor,
                 start = p1,
@@ -930,7 +1113,6 @@ private fun VideoHologram3DOrbCanvas(
                 cap = StrokeCap.Square
             )
 
-            // Optional 90-degree circuit branch stub (gives the intricate sci-fi glyph texture in the video)
             if (seg.hasBranchStub) {
                 val x3 = rShell * cos(seg.phiStub) * cos(seg.thetaStub)
                 val y3 = rShell * sin(seg.phiStub)
@@ -944,7 +1126,6 @@ private fun VideoHologram3DOrbCanvas(
                 )
             }
 
-            // Glowing node particle at circuit vertex
             val nodeRadius = (seg.dotSize * (0.60f + depth1 * 0.65f) * (1f + animatedAmp * 0.42f)).dp.toPx()
             if (depth1 > 0.68f && animatedAmp > 0.20f) {
                 drawCircle(
