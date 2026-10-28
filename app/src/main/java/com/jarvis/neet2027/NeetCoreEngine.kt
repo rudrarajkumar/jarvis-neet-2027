@@ -3,10 +3,16 @@ package com.jarvis.neet2027
 import android.app.AlarmManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.media.Ringtone
+import android.media.RingtoneManager
 import android.os.Build
-import android.provider.AlarmClock
+import android.os.VibrationEffect
+import android.os.Vibrator
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -29,16 +35,13 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
@@ -48,7 +51,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -58,7 +60,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -66,6 +67,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.jarvis.neet2027.model.NeetPlanRepository
 import com.jarvis.neet2027.model.NeetPlanRoot
 import kotlinx.coroutines.Dispatchers
@@ -83,19 +85,12 @@ import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
 import java.time.DayOfWeek
-import java.time.Instant
 import java.time.LocalDate
-import java.time.LocalTime
 import java.time.YearMonth
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
-import java.time.temporal.ChronoUnit
 import kotlin.math.abs
-
-// ============================================================================
-// 1. IMPHAL EAST WEATHER, GEOCODER & CLOCK DRIFT ENGINE (OPEN-METEO CC-BY 4.0)
-// ============================================================================
 
 @Serializable
 data class ImphalWeatherSnapshot(
@@ -131,8 +126,18 @@ data class CustomCalendarEvent(
     val id: Long,
     val dateIso: String,
     val title: String,
-    val category: String, // "TEST", "DEADLINE", "REVISION", "RESCHEDULED"
+    val category: String,
     val isDone: Boolean = false
+)
+
+@Serializable
+data class JarvisScheduledAlarm(
+    val id: Int,
+    val hour24: Int,
+    val minute: Int,
+    val timeFormatted: String,
+    val label: String,
+    val triggerAtMillis: Long
 )
 
 object NeetCoreStore {
@@ -147,8 +152,160 @@ object NeetCoreStore {
     private const val KEY_XP_POINTS = "jarvis_xp_points"
     private const val KEY_WATER_GLASSES = "daily_water_glasses"
     private const val KEY_ACTIVE_LOOP_INDEX = "active_recall_loop_idx"
+    private const val KEY_ARMED_ALARMS = "jarvis_armed_alarms_json"
+
+    private const val ACTION_JARVIS_ALARM_FIRE = "com.jarvis.neet2027.ACTION_ALARM_FIRE"
+    private const val ACTION_JARVIS_ALARM_DISMISS = "com.jarvis.neet2027.ACTION_ALARM_DISMISS"
 
     private val json = Json { ignoreUnknownKeys = true }
+    private var receiverRegistered = false
+    private var activeRingtone: Ringtone? = null
+
+    fun ensureAlarmReceiverRegistered(context: Context) {
+        if (receiverRegistered) return
+        val appCtx = context.applicationContext
+        val filter = IntentFilter().apply {
+            addAction(ACTION_JARVIS_ALARM_FIRE)
+            addAction(ACTION_JARVIS_ALARM_DISMISS)
+        }
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                val c = ctx ?: appCtx
+                when (intent?.action) {
+                    ACTION_JARVIS_ALARM_FIRE -> {
+                        val label = intent.getStringExtra("ALARM_LABEL") ?: "NEET 2027 Study Slot"
+                        fireAlarmNow(c, label)
+                    }
+                    ACTION_JARVIS_ALARM_DISMISS -> {
+                        stopRingingAlarm()
+                    }
+                }
+            }
+        }
+        ContextCompat.registerReceiver(appCtx, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+        receiverRegistered = true
+    }
+
+    fun fireAlarmNow(context: Context, label: String) {
+        runCatching {
+            stopRingingAlarm()
+            val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            val ringtone = RingtoneManager.getRingtone(context.applicationContext, uri)
+            activeRingtone = ringtone
+            ringtone?.play()
+        }
+        runCatching {
+            @Suppress("DEPRECATION")
+            val vib = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vib?.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 600, 300, 600, 300, 800), -1))
+            } else {
+                @Suppress("DEPRECATION")
+                vib?.vibrate(1500)
+            }
+        }
+        triggerStudyNotification(
+            context = context,
+            title = "⏰ J.A.R.V.I.S. ALARM // $label",
+            message = "Time for your scheduled NEET 2027 study block, sir. Open J.A.R.V.I.S. to dismiss."
+        )
+    }
+
+    fun stopRingingAlarm() {
+        runCatching {
+            activeRingtone?.stop()
+            activeRingtone = null
+        }
+    }
+
+    fun loadArmedAlarms(context: Context): List<JarvisScheduledAlarm> {
+        val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_ARMED_ALARMS, "[]") ?: "[]"
+        return runCatching { json.decodeFromString<List<JarvisScheduledAlarm>>(raw) }.getOrDefault(emptyList())
+    }
+
+    private fun saveArmedAlarms(context: Context, alarms: List<JarvisScheduledAlarm>) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().putString(KEY_ARMED_ALARMS, json.encodeToString(alarms)).apply()
+    }
+
+    fun clearAllArmedAlarms(context: Context) {
+        stopRingingAlarm()
+        saveArmedAlarms(context, emptyList())
+    }
+
+    /**
+     * Native Hardware Exact Alarm Scheduler (Zero external Clock app chooser popup!).
+     * Uses Android's `AlarmManager.setAlarmClock` to place a real system alarm in Xiaomi HyperOS
+     * and wakes the tablet at the exact Asia/Kolkata IST time.
+     */
+    fun scheduleSystemAlarmForSlot(context: Context, hour24: Int, minute: Int, label: String) {
+        ensureAlarmReceiverRegistered(context)
+        val zone = ZoneId.of("Asia/Kolkata")
+        val nowIst = ZonedDateTime.now(zone)
+        var targetIst = nowIst.withHour(hour24.coerceIn(0, 23))
+            .withMinute(minute.coerceIn(0, 59))
+            .withSecond(0)
+            .withNano(0)
+        if (!targetIst.isAfter(nowIst)) {
+            targetIst = targetIst.plusDays(1)
+        }
+
+        val triggerMillis = targetIst.toInstant().toEpochMilli()
+        val alarmId = (hour24 * 100 + minute)
+        val formattedTime = targetIst.format(DateTimeFormatter.ofPattern("hh:mm a 'IST'"))
+
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val fireIntent = Intent(ACTION_JARVIS_ALARM_FIRE).apply {
+            setPackage(context.packageName)
+            putExtra("ALARM_LABEL", label)
+        }
+        val firePending = PendingIntent.getBroadcast(
+            context.applicationContext,
+            alarmId,
+            fireIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val showAppIntent = Intent(context.applicationContext, MainActivity::class.java)
+        val showPending = PendingIntent.getActivity(
+            context.applicationContext,
+            alarmId,
+            showAppIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        // Schedule native hardware alarm clock (never opens "Complete action using" popup!)
+        runCatching {
+            val clockInfo = AlarmManager.AlarmClockInfo(triggerMillis, showPending)
+            alarmManager.setAlarmClock(clockInfo, firePending)
+        }.onFailure {
+            runCatching {
+                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMillis, firePending)
+            }
+        }
+
+        val currentList = loadArmedAlarms(context).filterNot { it.id == alarmId }.toMutableList()
+        currentList.add(
+            0,
+            JarvisScheduledAlarm(
+                id = alarmId,
+                hour24 = hour24,
+                minute = minute,
+                timeFormatted = formattedTime,
+                label = label,
+                triggerAtMillis = triggerMillis
+            )
+        )
+        saveArmedAlarms(context, currentList)
+
+        triggerStudyNotification(
+            context = context,
+            title = "✓ J.A.R.V.I.S. Native Alarm Armed ($formattedTime)",
+            message = "$label — Hardware AlarmClock locked for Imphal IST (no external app needed)."
+        )
+    }
 
     fun loadWeather(context: Context): ImphalWeatherSnapshot {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -302,7 +459,6 @@ object NeetCoreStore {
                 "Imphal East Forecast: $temp°C, Rain chance $rainMax%"
             }
 
-            // Optional Air Quality fetch from Open-Meteo AQI endpoint
             val aqiVal = runCatching {
                 val aqiUrl = URL("https://air-quality-api.open-meteo.com/v1/air-quality?latitude=$lat&longitude=$lon&current=us_aqi")
                 val aqiConn = (aqiUrl.openConnection() as HttpURLConnection).apply {
@@ -355,7 +511,7 @@ object NeetCoreStore {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 channelId,
-                "J.A.R.V.I.S. NEET Timetable Instructor",
+                "J.A.R.V.I.S. NEET Timetable & Alarms",
                 NotificationManager.IMPORTANCE_HIGH
             )
             nm.createNotificationChannel(channel)
@@ -369,22 +525,7 @@ object NeetCoreStore {
             .build()
         nm.notify((System.currentTimeMillis() % 10000).toInt(), notif)
     }
-
-    fun scheduleSystemAlarmForSlot(context: Context, hour24: Int, minute: Int, label: String) {
-        val intent = Intent(AlarmClock.ACTION_SET_ALARM).apply {
-            putExtra(AlarmClock.EXTRA_HOUR, hour24)
-            putExtra(AlarmClock.EXTRA_MINUTES, minute)
-            putExtra(AlarmClock.EXTRA_MESSAGE, "J.A.R.V.I.S. NEET: $label")
-            putExtra(AlarmClock.EXTRA_SKIP_UI, false)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        runCatching { context.startActivity(intent) }
-    }
 }
-
-// ============================================================================
-// 2. SCREEN 1: HOME PROFILE, WEATHER, LIVE TIMETABLE INSTRUCTOR & PROACTIVE AI
-// ============================================================================
 
 @Composable
 fun NeetCoreCommandScreen(
@@ -398,18 +539,19 @@ fun NeetCoreCommandScreen(
 
     var weather by remember { mutableStateOf(NeetCoreStore.loadWeather(context)) }
     var isRefreshingWeather by remember { mutableStateOf(false) }
+    val armedAlarms = remember { mutableStateListOf<JarvisScheduledAlarm>().apply { addAll(NeetCoreStore.loadArmedAlarms(context)) } }
     var proactiveMessage by remember {
         mutableStateOf(
-            "Tap 'Morning Briefing', 'What Now?', 'End-of-Day Debrief', or 'Bad-Day Minimum Re-Plan' below for numbered butler instructions."
+            "Tap 'Morning Briefing', 'What Now?', 'End-of-Day Debrief', or 'Set Next Slot Alarm' below for numbered butler instructions."
         )
     }
 
-    // 50-minute Self-Study Pomodoro Timer
     var pomodoroSecondsLeft by remember { mutableIntStateOf(50 * 60) }
     var pomodoroRunning by remember { mutableStateOf(false) }
     var waterGlasses by remember { mutableIntStateOf(NeetCoreStore.getWaterGlasses(context)) }
 
     LaunchedEffect(Unit) {
+        NeetCoreStore.ensureAlarmReceiverRegistered(context)
         weather = NeetCoreStore.fetchLiveImphalWeather(context)
     }
 
@@ -419,11 +561,7 @@ fun NeetCoreCommandScreen(
             pomodoroSecondsLeft--
             if (pomodoroSecondsLeft == 0) {
                 pomodoroRunning = false
-                NeetCoreStore.triggerStudyNotification(
-                    context,
-                    "50-Minute NEET Self-Study Block Complete, Sir!",
-                    "Stand up, drink water, rest your eyes for 10 minutes, and log wrong questions in JNote."
-                )
+                NeetCoreStore.fireAlarmNow(context, "50-Minute NEET Self-Study Block Complete")
             }
         }
     }
@@ -504,10 +642,10 @@ fun NeetCoreCommandScreen(
             }
         }
 
-        // 2. Live Timetable Instructor + Proactive Guidance Card
+        // 2. Live Timetable Instructor + Native Hardware Alarm Console
         LiquidGlassCard(lab = lab, tilt = tilt, accentTint = palette.accentSecondary) {
             Text(
-                text = "LIVE TIMETABLE INSTRUCTOR // NOW vs NEXT (IMPHAL IST)",
+                text = "LIVE TIMETABLE INSTRUCTOR & NATIVE HARDWARE ALARM ENGINE (IMPHAL IST)",
                 color = palette.accentSecondary,
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold,
@@ -593,55 +731,54 @@ fun NeetCoreCommandScreen(
                     }
                 )
                 LiquidGlassButton(
-                    text = "End-of-Day Debrief",
-                    icon = Icons.Default.CheckCircle,
-                    lab = lab,
-                    accentColor = palette.accentSecondary,
-                    onClick = {
-                        val doneCount = NeetCoreStore.getCompletedLectureKeys(context).size
-                        proactiveMessage = """
-                            01:20 AM NIGHT DEBRIEF, SIR:
-                            1. Total Lectures Ticked So Far: $doneCount / 480 remaining in plan.
-                            2. Complete your 40-minute D0/D1/D3/D7/D14/D30 recall + Loops A–F audit.
-                            3. Queue tomorrow's exact 4 Physics Wallah videos and write your first 10-minute action.
-                            4. Mandatory 8-Hour Sleep Guardrail begins at 02:00 AM IST sharp—lights out, sir.
-                        """.trimIndent()
-                    }
-                )
-                LiquidGlassButton(
-                    text = "Bad-Day Re-Plan",
-                    icon = Icons.Default.Warning,
-                    lab = lab,
-                    accentColor = JarvisSpatialPalettes.StatusWarning,
-                    onClick = {
-                        proactiveMessage = """
-                            BAD-DAY MINIMUM PROTOCOL ACTIVATED (NO GUILT, NO SLEEP CUTTING):
-                            1. Do NOT stack 8 hours of backlog onto tomorrow and NEVER cut your 02:00–10:00 sleep window.
-                            2. Execute today's minimum: finish 1 main lecture + 20 minutes closed-book active recall.
-                            3. Missed slots are shifted to your Sunday Backlog Triage / review buffer slots automatically.
-                        """.trimIndent()
-                    }
-                )
-                LiquidGlassButton(
-                    text = "Set Next Slot Alarm",
+                    text = "Arm Next Slot Alarm (${nextSlot.startTime})",
                     icon = Icons.Default.Notifications,
                     lab = lab,
-                    accentColor = palette.accentTertiary,
+                    accentColor = JarvisSpatialPalettes.StatusWarning,
                     onClick = {
                         val parts = nextSlot.startTime.split(":")
                         val h = parts.getOrNull(0)?.toIntOrNull() ?: 10
                         val m = parts.getOrNull(1)?.toIntOrNull() ?: 30
                         NeetCoreStore.scheduleSystemAlarmForSlot(context, h, m, nextSlot.title)
-                        NeetCoreStore.triggerStudyNotification(
-                            context,
-                            "J.A.R.V.I.S. Slot Reminder Armed (${nextSlot.startTime} IST)",
-                            "${nextSlot.title}: ${nextSlot.instruction}"
-                        )
+                        armedAlarms.clear()
+                        armedAlarms.addAll(NeetCoreStore.loadArmedAlarms(context))
+                        proactiveMessage = "✓ Armed native Xiaomi hardware alarm for ${nextSlot.startTime} IST (${nextSlot.title})."
+                    }
+                )
+                LiquidGlassButton(
+                    text = "Test Alarm Sound",
+                    icon = Icons.Default.PlayArrow,
+                    lab = lab,
+                    accentColor = JarvisSpatialPalettes.StatusSuccess,
+                    onClick = {
+                        NeetCoreStore.fireAlarmNow(context, "NEET 2027 Test Chime")
+                        proactiveMessage = "🔔 Ringing J.A.R.V.I.S. hardware alarm chime — tap 'Stop Ringing' to silence."
+                    }
+                )
+                LiquidGlassButton(
+                    text = "Stop Ringing",
+                    icon = Icons.Default.Delete,
+                    lab = lab,
+                    accentColor = JarvisSpatialPalettes.StatusError,
+                    onClick = {
+                        NeetCoreStore.stopRingingAlarm()
+                        proactiveMessage = "✓ Alarm silenced, sir."
                     }
                 )
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            if (armedAlarms.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = "ARMED NATIVE ALARMS: " + armedAlarms.joinToString(" • ") { "${it.timeFormatted} (${it.label})" },
+                    color = JarvisSpatialPalettes.StatusSuccess,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -659,7 +796,7 @@ fun NeetCoreCommandScreen(
             }
         }
 
-        // 3. 50-Minute Self-Study Pomodoro & Wellbeing Guardrails (Sleep, Water, Eye-Rest)
+        // 3. 50-Minute Self-Study Pomodoro & Wellbeing Guardrails
         LiquidGlassCard(lab = lab, tilt = tilt) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -684,7 +821,7 @@ fun NeetCoreCommandScreen(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "10m closed-book formula recall -> 25m NEETprep MCQs -> 15m JNote error log (20-20-20 eye rest every 20m).",
+                        text = "10m closed-book formula recall -> 25m NEETprep MCQs -> 15m JNote error log.",
                         color = palette.textSecondary,
                         fontSize = 12.sp
                     )
@@ -718,10 +855,6 @@ fun NeetCoreCommandScreen(
         }
     }
 }
-
-// ============================================================================
-// 3. SCREEN 2: INTERACTIVE NEET CALENDAR + PROGRESS TRACKER + MOCK ANALYSER
-// ============================================================================
 
 @Composable
 fun InteractiveCalendarAndProgressScreen(
@@ -758,7 +891,6 @@ fun InteractiveCalendarAndProgressScreen(
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        // 1. Overall Progress, Streaks, XP & Subject Completion Bars
         LiquidGlassCard(lab = lab, tilt = tilt, accentTint = palette.accentPrimary) {
             val totalDone = plan.videoCountAudit.totalKnownCompleted + completedSet.size
             val overallFraction = (totalDone.toFloat() / plan.videoCountAudit.totalKnownSum.toFloat()).coerceIn(0f, 1f)
@@ -816,7 +948,6 @@ fun InteractiveCalendarAndProgressScreen(
             }
         }
 
-        // 2. Interactive Month Calendar + Day Inspector (Tick Lectures, Done/Missed/Reschedule)
         LiquidGlassCard(lab = lab, tilt = tilt, accentTint = palette.accentSecondary) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -845,7 +976,6 @@ fun InteractiveCalendarAndProgressScreen(
             }
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Horizontal Scrollable Date Strip for the selected month
             Row(
                 modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -995,7 +1125,6 @@ fun InteractiveCalendarAndProgressScreen(
             )
         }
 
-        // 3. Loops A-F Old-Chapter Recall Rotator & Mock-Test Error Heatmap Analyser
         LiquidGlassCard(lab = lab, tilt = tilt) {
             val activeLoop = plan.oldChapterRecallLoops[activeLoopIdx % plan.oldChapterRecallLoops.size]
             Row(
