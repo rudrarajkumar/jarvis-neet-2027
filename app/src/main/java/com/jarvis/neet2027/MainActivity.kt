@@ -411,6 +411,7 @@ private enum class JarvisNavTab(val label: String, val icon: ImageVector) {
     BUTLER_TTS("Butler TTS", Icons.Default.VolumeUp),
     OFFLINE_RAG("Offline RAG", Icons.Default.Memory),
     VISION_HUD("Vision & HUD", Icons.Default.Bolt),
+    AUDIT_OTA("Audit & OTA", Icons.Default.Shield),
     STUDY_LIBRARY("0.Neet 2027", Icons.Default.Folder),
     VAULT_TOOLS("Vault", Icons.Default.Lock),
     NEET_COMMAND("NEET Hub", Icons.Default.Schedule),
@@ -881,7 +882,7 @@ object JarvisBrainEngine {
 }
 
 // ============================================================================
-// 5. MAIN ACTIVITY & CHAPTER 10 SPATIAL ROOT COMPOSABLE
+// 5. MAIN ACTIVITY & CHAPTER 11 MASTER PRODUCTION ROOT COMPOSABLE
 // ============================================================================
 
 class MainActivity : ComponentActivity() {
@@ -894,7 +895,7 @@ class MainActivity : ComponentActivity() {
         latestShareBanner = JarvisVaultManager.handleSharedIncomingIntent(this, intent)
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
-                JarvisChapterTenApp(initialShareBanner = latestShareBanner)
+                JarvisMasterProductionApp(initialShareBanner = latestShareBanner)
             }
         }
     }
@@ -909,7 +910,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun JarvisChapterTenApp(initialShareBanner: String? = null) {
+fun JarvisMasterProductionApp(initialShareBanner: String? = null) {
     val context = LocalContext.current
     val plan = remember { NeetPlanRepository.loadPlan(context) }
     val masterPrompt = remember { NeetPlanRepository.loadMasterPrompt(context) }
@@ -936,9 +937,9 @@ fun JarvisChapterTenApp(initialShareBanner: String? = null) {
                     ChatMessageItem(
                         id = 1L,
                         role = "jarvis",
-                        visibleText = "At your service, sir. Chapter 10 Multimodal Vision Solver & Draggable Floating HUD Pill are online. Double-clap on any tab to launch Gemini Live.",
-                        emotionTag = "calm",
-                        engineBadge = "VISION + HUD READY",
+                        visibleText = "At your service, sir. All 11 chapters—including Universal Double-Clap Gemini Live, British Butler TTS, Hybrid Local RAG, Multimodal Vision, Floating HUD Pill & 12-Point Self-Audit—are online.",
+                        emotionTag = "proud",
+                        engineBadge = "ALL 11 CHAPTERS ONLINE",
                         timestampIst = "ONLINE"
                     )
                 )
@@ -1029,6 +1030,12 @@ fun JarvisChapterTenApp(initialShareBanner: String? = null) {
                     lab = lab,
                     committedModelId = committedModelId,
                     forceOffline = forceOfflineRouter,
+                    tilt = tilt
+                )
+                JarvisNavTab.AUDIT_OTA -> JarvisSelfAuditAndOtaScreen(
+                    plan = plan,
+                    lab = lab,
+                    chatMessages = chatMessages,
                     tilt = tilt
                 )
                 JarvisNavTab.STUDY_LIBRARY -> StudyLibraryScreen(
@@ -1197,7 +1204,7 @@ fun JarvisChapterTenApp(initialShareBanner: String? = null) {
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "J.A.R.V.I.S. // CHAPTER 10 MULTIMODAL VISION & FLOATING HUD ONLINE",
+                        text = "J.A.R.V.I.S. // ALL 11 CHAPTERS ONLINE (PRODUCTION MASTER)",
                         color = palette.accentPrimary,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
@@ -1205,7 +1212,7 @@ fun JarvisChapterTenApp(initialShareBanner: String? = null) {
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Camera/Gallery NEET MCQ Solver • Floating HUD Pill • Universal Double-Clap Gemini Live",
+                        text = "Universal Double-Clap Gemini Live • Hybrid RAG • Vision & Floating HUD • Self-Audit & OTA",
                         color = palette.textSecondary,
                         fontSize = 13.sp
                     )
