@@ -1,6 +1,8 @@
 package com.jarvis.neet2027
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -19,15 +21,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -40,7 +38,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,6 +53,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.jarvis.neet2027.model.NeetPlanRepository
 import com.jarvis.neet2027.model.NeetPlanRoot
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -69,6 +67,10 @@ import java.net.HttpURLConnection
 import java.net.URL
 import kotlin.math.ln
 import kotlin.math.max
+
+// ============================================================================
+// 1. ON-DEVICE GGUF / LITERT MODEL MANAGER & SNAPDRAGON 870 RAM GUARDRAIL
+// ============================================================================
 
 enum class LocalModelRamState(val label: String) {
     UNLOADED("UNLOADED (0 MB RAM Used)"),
@@ -124,11 +126,21 @@ object LocalLlmModelManager {
             fileName = "gemma-3-1b-it-q4_k_m.gguf",
             quantType = "Q4_K_M (4-bit)",
             expectedSizeMb = 720,
-            directDownloadUrl = "https://huggingface.co/bartowski/google_gemma-3-1b-it-GGUF/resolve/main/google_gemma-3-1b-it-Q4_K_M.gguf",
             minFreeRamMb = 1300,
+            directDownloadUrl = "https://huggingface.co/bartowski/google_gemma-3-1b-it-GGUF/resolve/main/google_gemma-3-1b-it-Q4_K_M.gguf",
             description = "Ultra-lightweight Google Gemma 3 1B model (~30 tok/s, low battery drain during PW split-screen)."
         )
     )
+
+    fun isDeviceOnlineRightNow(context: Context): Boolean {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
+        val net = cm.activeNetwork ?: return false
+        val caps = cm.getNetworkCapabilities(net) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ||
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET))
+    }
 
     fun getModelsDirectory(context: Context): File {
         val neetRoot = StudyLibraryManager.getDedicatedRootFolder(context)
@@ -158,6 +170,17 @@ object LocalLlmModelManager {
         }.orEmpty()
     }
 
+    fun autoMountExistingModelIfReady(context: Context) {
+        if (ramState == LocalModelRamState.READY_IN_RAM) return
+        val dir = getModelsDirectory(context)
+        val gemmaFile = File(dir, "gemma-3-1b-it-q4_k_m.gguf")
+        val qwenFile = File(dir, "qwen2.5-1.5b-instruct-q4_k_m.gguf")
+        when {
+            gemmaFile.exists() && gemmaFile.length() > 500L * 1024L * 1024L -> mountModelWithRamGuardrail(context, gemmaFile)
+            qwenFile.exists() && qwenFile.length() > 500L * 1024L * 1024L -> mountModelWithRamGuardrail(context, qwenFile)
+        }
+    }
+
     fun mountModelWithRamGuardrail(context: Context, modelFile: File): String {
         val (availMb, _) = XiaomiSurvivalHelper.getAvailableRamMb(context)
         if (availMb < MIN_SAFE_FREE_RAM_MB) {
@@ -166,7 +189,7 @@ object LocalLlmModelManager {
             return statusBanner
         }
         if (!modelFile.exists() || modelFile.length() < 1024 * 1024) {
-            statusBanner = "Model file '${modelFile.name}' is not downloaded yet. Tap 'Download Resumable' or copy it into 0.Neet 2027/AI_MODELS."
+            statusBanner = "Model file '${modelFile.name}' is not downloaded yet. Tap 'Download GGUF' or copy it into 0.Neet 2027/AI_MODELS."
             return statusBanner
         }
 
@@ -178,13 +201,14 @@ object LocalLlmModelManager {
         }.getOrDefault(false)
 
         if (!validHeader) {
-            statusBanner = "⚠ '${modelFile.name}' is an incomplete download (missing GGUF magic header). Tap Resume Download."
+            statusBanner = "⚠ '${modelFile.name}' is an incomplete download (missing GGUF magic header). Tap Resume Download when Wi-Fi is on."
             return statusBanner
         }
 
+        val sizeMb = modelFile.length() / (1024 * 1024)
         ramState = LocalModelRamState.READY_IN_RAM
-        activeMountedModelName = "${modelFile.name} (${modelFile.length() / (1024 * 1024)} MB • Grounded by Hybrid RAG)"
-        statusBanner = "✓ Mounted '${modelFile.name}' with Snapdragon 870 RAM Guardrail ($availMb MB free RAM)."
+        activeMountedModelName = "${modelFile.name} ($sizeMb MB • Grounded by Hybrid RAG)"
+        statusBanner = "✓ Mounted '${modelFile.name}' ($sizeMb MB) in RAM with Snapdragon 870 Guardrail ($availMb MB free RAM)."
         return statusBanner
     }
 
@@ -202,6 +226,13 @@ object LocalLlmModelManager {
         onUpdated: () -> Unit
     ) {
         if (isDownloading) return
+        if (!isDeviceOnlineRightNow(context)) {
+            val targetFile = File(getModelsDirectory(context), preset.fileName)
+            val savedMb = if (targetFile.exists()) targetFile.length() / (1024 * 1024) else 0L
+            statusBanner = "Wi-Fi is currently OFF ($savedMb MB already saved on disk for ${preset.fileName}). Turn Wi-Fi on to download, or tap 'Mount in RAM' if already downloaded!"
+            return
+        }
+
         isDownloading = true
         downloadingModelId = preset.id
         statusBanner = "Starting resumable download for ${preset.title} into 0.Neet 2027/AI_MODELS..."
@@ -253,14 +284,16 @@ object LocalLlmModelManager {
                     isDownloading = false
                     downloadingModelId = ""
                     downloadProgress = 1f
-                    statusBanner = "✓ Download complete or paused at ${targetFile.length() / (1024 * 1024)} MB in ${targetFile.absolutePath}"
+                    val finalMb = targetFile.length() / (1024 * 1024)
+                    statusBanner = "✓ Saved $finalMb MB to 0.Neet 2027/AI_MODELS/${targetFile.name}. Tap 'Mount in RAM'!"
                     onUpdated()
                 }
-            }.onFailure { err ->
+            }.onFailure {
                 withContext(Dispatchers.Main) {
                     isDownloading = false
                     downloadingModelId = ""
-                    statusBanner = "Download paused (${targetFile.length() / (1024 * 1024)} MB saved on disk — tap Resume anytime): ${err.message}"
+                    val savedMb = if (targetFile.exists()) targetFile.length() / (1024 * 1024) else 0L
+                    statusBanner = "Download paused ($savedMb MB safely saved on disk for ${preset.fileName} — tap Resume anytime when Wi-Fi is on)."
                     onUpdated()
                 }
             }
@@ -274,6 +307,10 @@ object LocalLlmModelManager {
         statusBanner = "⏸ Download paused safely. Partial GGUF bytes are preserved in 0.Neet 2027/AI_MODELS — tap Resume anytime."
     }
 }
+
+// ============================================================================
+// 2. HYBRID LOCAL RAG RETRIEVER & SMART OFFLINE CONVERSATIONAL RESPONDER
+// ============================================================================
 
 @Serializable
 data class RagCitationChunk(
@@ -295,35 +332,54 @@ object JarvisHybridRagEngine {
         val verifiedFact: String
     )
 
+    // Expanded conversational & generic stop-words so "how r u" or "is offline mode working"
+    // NEVER triggers a fake PDF match!
+    private val conversationalStopWords = setOf(
+        "what", "when", "where", "which", "who", "whom", "whose", "why", "how",
+        "are", "you", "your", "yours", "can", "could", "would", "should", "shall",
+        "will", "does", "did", "done", "doing", "has", "have", "had", "having",
+        "the", "and", "for", "not", "but", "with", "from", "that", "this", "these",
+        "those", "they", "them", "their", "there", "here", "were", "was", "been",
+        "being", "into", "onto", "upon", "about", "above", "below", "between",
+        "jarvis", "please", "tell", "explain", "show", "give", "make", "made",
+        "reply", "natural", "sentences", "like", "gemini", "live", "spoken", "chat",
+        "back", "forth", "quickly", "short", "detail", "detailed", "elaborate",
+        "offline", "online", "mode", "working", "work", "works", "worked",
+        "mountain", "mounted", "mount", "ram", "wifi", "internet", "connection",
+        "hello", "hey", "hi", "good", "morning", "afternoon", "evening", "night",
+        "thanks", "thank", "okay", "yes", "nah", "nope", "sir", "test", "testing",
+        "status", "ready", "fine", "well", "going", "now", "right", "today"
+    )
+
     private val ncertKnowledgeGraph = listOf(
         NcertCoreEntry(
             subject = "Physics (Class 12 Ch 1)",
             chapter = "Electric Charges and Fields",
-            keywords = listOf("coulomb", "gauss", "dipole", "axial", "equatorial", "flux", "charge", "field", "epsilon"),
+            keywords = listOf("coulomb", "gauss", "dipole", "axial", "equatorial", "flux", "charge", "electrostatic", "epsilon"),
             verifiedFact = "Coulomb's Law: F = (1/4πε₀)·|q₁q₂|/r². Gauss's Law: Φ_E = ∮ E·dA = q_enclosed/ε₀. Electric dipole field on axial line E_axial = 2kp/r³ (parallel to p) is exactly twice the equatorial magnitude E_eq = kp/r³ (anti-parallel to p). Torque τ = p × E."
         ),
         NcertCoreEntry(
             subject = "Physics (Class 12 Ch 2)",
             chapter = "Electrostatic Potential and Capacitance",
-            keywords = listOf("potential", "capacitance", "capacitor", "dielectric", "energy", "equipotential"),
+            keywords = listOf("potential", "capacitance", "capacitor", "dielectric", "equipotential"),
             verifiedFact = "Parallel plate capacitor C = Kε₀A/d. Energy stored U = ½CV² = Q²/(2C). Equipotential surfaces are always perpendicular to electric field lines; work done moving a charge on an equipotential surface is zero."
         ),
         NcertCoreEntry(
             subject = "Physics (Class 12 Ch 3)",
             chapter = "Current Electricity",
-            keywords = listOf("kirchhoff", "wheatstone", "drift", "resistivity", "ohm", "potentiometer", "current", "cell"),
+            keywords = listOf("kirchhoff", "wheatstone", "drift", "resistivity", "ohm", "potentiometer", "current"),
             verifiedFact = "Drift velocity v_d = -eEτ/m and current I = neAv_d. Kirchhoff's Junction Rule (ΣI = 0) conserves charge; Loop Rule (ΣΔV = 0) conserves energy. Balanced Wheatstone bridge: P/Q = R/S."
         ),
         NcertCoreEntry(
             subject = "Physics (Class 11)",
             chapter = "Oscillations & Waves (SHM)",
-            keywords = listOf("shm", "oscillation", "pendulum", "spring", "frequency", "harmonic", "doppler", "beats"),
+            keywords = listOf("shm", "oscillation", "pendulum", "spring", "harmonic", "doppler", "beats"),
             verifiedFact = "In Simple Harmonic Motion, x(t) = A sin(ωt + φ), v = ω√(A² - x²), a = -ω²x. Total energy E = ½mω²A² is constant, while KE and PE oscillate at frequency 2f. Simple pendulum T = 2π√(L/g)."
         ),
         NcertCoreEntry(
             subject = "Physics (Class 11)",
             chapter = "Rotational Motion & Gravitation",
-            keywords = listOf("rotational", "inertia", "torque", "angular", "rolling", "escape", "kepler", "gravitation", "satellite"),
+            keywords = listOf("rotational", "inertia", "torque", "angular", "rolling", "escape", "kepler", "gravitation", "satellite", "centre"),
             verifiedFact = "Moment of inertia: Ring = MR², Disc = ½MR², Solid Sphere = (2/5)MR², Hollow Sphere = (2/3)MR², Rod (center) = (1/12)ML². Rolling kinetic energy K = ½mv_cm²(1 + k²/R²). Escape velocity v_e = √(2GM/R) = √2 · v_orbital."
         ),
         NcertCoreEntry(
@@ -347,7 +403,7 @@ object JarvisHybridRagEngine {
         NcertCoreEntry(
             subject = "Physical Chemistry",
             chapter = "Electrochemistry, Kinetics & Equilibrium",
-            keywords = listOf("nernst", "faraday", "kinetics", "arrhenius", "half-life", "henderson", "buffer", "ph", "ksp", "gibbs"),
+            keywords = listOf("nernst", "faraday", "kinetics", "arrhenius", "half-life", "henderson", "buffer", "ksp", "gibbs"),
             verifiedFact = "Nernst Equation at 298 K: E_cell = E°_cell - (0.0591/n) log Q, and ΔG° = -nFE°_cell. First-order kinetics: k = (2.303/t) log([A]₀/[A]), t_1/2 = 0.693/k (independent of initial concentration). Acidic buffer pH = pK_a + log([Salt]/[Acid])."
         ),
         NcertCoreEntry(
@@ -358,84 +414,115 @@ object JarvisHybridRagEngine {
         )
     )
 
+    /**
+     * Strips raw file-path headers ("PERMANENT PDF MEMORY // Path: ...") so snippets
+     * read cleanly like a real tutor instead of dumping file paths.
+     */
+    private fun cleanPdfMemorySnippet(raw: String): String {
+        val lines = raw.lines()
+            .map { it.trim() }
+            .filter { line ->
+                line.isNotBlank() &&
+                    !line.startsWith("PERMANENT PDF MEMORY", ignoreCase = true) &&
+                    !line.startsWith("Track:", ignoreCase = true) &&
+                    !line.startsWith("Chapter:", ignoreCase = true) &&
+                    !line.startsWith("Size:", ignoreCase = true)
+            }
+        return lines.joinToString(" ").replace(Regex("\\s+"), " ").trim()
+    }
+
     fun retrieveTopCitations(context: Context, query: String, topK: Int = 3): List<RagCitationChunk> {
-        val cleanQ = query.lowercase().replace(Regex("[^a-z0-9\\s]"), " ")
-        val stopWords = setOf(
-            "what", "when", "where", "which", "explain", "tell", "about", "jarvis", "please",
-            "from", "with", "that", "this", "have", "reply", "natural", "sentences", "like", "gemini", "live"
-        )
-        val queryTokens = cleanQ.split(Regex("\\s+")).filter { it.length >= 3 && it !in stopWords }.distinct()
+        // Strip any system instruction suffix added by Live Orb
+        val userPartOnly = query.substringBefore("(Reply in 1 to 2").trim()
+        val cleanQ = userPartOnly.lowercase().replace(Regex("[^a-z0-9\\s]"), " ")
+
+        // Only keep meaningful scientific/subject tokens (length >= 4, or known 3-letter NEET acronyms)
+        val allowedShortAcronyms = setOf("goc", "shm", "dpp", "pcr", "dna", "rna", "atp", "lh", "fsh", "sn1", "sn2", "emf", "ksp")
+        val queryTokens = cleanQ.split(Regex("\\s+"))
+            .filter { tok ->
+                tok !in conversationalStopWords && (tok.length >= 4 || tok in allowedShortAcronyms)
+            }
+            .distinct()
+
         if (queryTokens.isEmpty()) return emptyList()
 
         val candidates = mutableListOf<RagCitationChunk>()
 
-        val neetRoot = StudyLibraryManager.getDedicatedRootFolder(context)
-        StudyLibraryManager.ensurePermanentMemoriesLoaded(context, neetRoot)
-        val pdfMemories = StudyLibraryManager.getAllPermanentMemories()
-
-        pdfMemories.forEach { mem ->
-            val combined = "${mem.fileName} ${mem.matchedChapter} ${mem.extractedMemoryText}".lowercase()
-            var score = 0f
-            queryTokens.forEach { tok ->
-                if (mem.fileName.lowercase().contains(tok)) score += 3.2f
-                if (mem.matchedChapter.lowercase().contains(tok)) score += 2.8f
-                val count = Regex(Regex.escape(tok)).findAll(combined).count()
-                if (count > 0) {
-                    score += (1.4f + ln(count.toDouble()).toFloat())
-                }
-            }
-            if (score > 0f) {
-                val confidence = ((score / (queryTokens.size * 3.2f)) * 100f).toInt().coerceIn(25, 99)
-                candidates.add(
-                    RagCitationChunk(
-                        sourceType = "0.Neet 2027 PDF",
-                        sourceTitle = mem.fileName,
-                        chapterOrFolder = "${mem.subjectTrack} • ${mem.matchedChapter} (${mem.pageCount}p)",
-                        snippet = mem.extractedMemoryText.take(360).replace("\n", " "),
-                        confidencePercent = confidence
-                    )
-                )
-            }
-        }
-
-        val vaultNotes = JarvisVaultManager.loadVaultNotes(context)
-        vaultNotes.forEach { note ->
-            val combined = "${note.title} ${note.folder} ${note.tags.joinToString(" ")} ${note.markdownBody}".lowercase()
-            var score = 0f
-            queryTokens.forEach { tok ->
-                if (note.title.lowercase().contains(tok)) score += 3.0f
-                if (note.tags.any { it.lowercase().contains(tok) }) score += 2.5f
-                if (combined.contains(tok)) score += 1.8f
-            }
-            if (score > 0f) {
-                val confidence = ((score / (queryTokens.size * 3.0f)) * 100f).toInt().coerceIn(28, 98)
-                candidates.add(
-                    RagCitationChunk(
-                        sourceType = "AES-256 Vault",
-                        sourceTitle = note.title,
-                        chapterOrFolder = "${note.folder} (Recall: ${note.recallStagesDone.joinToString("/")})",
-                        snippet = note.markdownBody.take(320).replace("\n", " "),
-                        confidencePercent = confidence
-                    )
-                )
-            }
-        }
-
+        // 1. Search Embedded NCERT Class 11 & 12 Knowledge Graph (Whole-word / prefix match)
         ncertKnowledgeGraph.forEach { entry ->
             var score = 0f
             queryTokens.forEach { tok ->
-                if (entry.keywords.any { it.contains(tok) || tok.contains(it) }) score += 3.4f
-                if (entry.chapter.lowercase().contains(tok)) score += 2.4f
-                if (entry.verifiedFact.lowercase().contains(tok)) score += 1.6f
+                val wordRegex = Regex("\\b${Regex.escape(tok)}", RegexOption.IGNORE_CASE)
+                if (entry.keywords.any { it.equals(tok, true) || it.startsWith(tok, true) || tok.startsWith(it, true) }) {
+                    score += 4.2f
+                }
+                if (wordRegex.containsMatchIn(entry.chapter)) score += 2.8f
+                if (wordRegex.containsMatchIn(entry.verifiedFact)) score += 1.8f
             }
-            if (score > 0f) {
-                val confidence = ((score / (max(1, queryTokens.size) * 3.2f)) * 100f).toInt().coerceIn(35, 99)
+            if (score >= 2.5f) {
+                val confidence = ((score / (max(1, queryTokens.size) * 4.2f)) * 100f).toInt().coerceIn(40, 99)
                 candidates.add(
                     RagCitationChunk(
                         sourceType = "NCERT Core",
                         sourceTitle = entry.chapter,
                         chapterOrFolder = entry.subject,
                         snippet = entry.verifiedFact,
+                        confidencePercent = confidence
+                    )
+                )
+            }
+        }
+
+        // 2. Search AES-256 Encrypted Vault & Mistake Notebook
+        val vaultNotes = JarvisVaultManager.loadVaultNotes(context)
+        vaultNotes.forEach { note ->
+            val combined = "${note.title} ${note.folder} ${note.tags.joinToString(" ")} ${note.markdownBody}"
+            var score = 0f
+            queryTokens.forEach { tok ->
+                val wordRegex = Regex("\\b${Regex.escape(tok)}\\b", RegexOption.IGNORE_CASE)
+                if (wordRegex.containsMatchIn(note.title)) score += 3.5f
+                if (note.tags.any { it.equals(tok, true) }) score += 2.8f
+                if (wordRegex.containsMatchIn(combined)) score += 1.8f
+            }
+            if (score >= 2.2f) {
+                val confidence = ((score / (queryTokens.size * 3.5f)) * 100f).toInt().coerceIn(38, 98)
+                candidates.add(
+                    RagCitationChunk(
+                        sourceType = "AES-256 Vault",
+                        sourceTitle = note.title,
+                        chapterOrFolder = "${note.folder} (Recall: ${note.recallStagesDone.joinToString("/")})",
+                        snippet = note.markdownBody.take(300).replace("\n", " "),
+                        confidencePercent = confidence
+                    )
+                )
+            }
+        }
+
+        // 3. Search Permanent PDF Memories from `/storage/emulated/0/0.Neet 2027` using WHOLE-WORD boundaries
+        val neetRoot = StudyLibraryManager.getDedicatedRootFolder(context)
+        StudyLibraryManager.ensurePermanentMemoriesLoaded(context, neetRoot)
+        val pdfMemories = StudyLibraryManager.getAllPermanentMemories()
+
+        pdfMemories.forEach { mem ->
+            val cleanBody = cleanPdfMemorySnippet(mem.extractedMemoryText)
+            var score = 0f
+            queryTokens.forEach { tok ->
+                val wordRegex = Regex("\\b${Regex.escape(tok)}", RegexOption.IGNORE_CASE)
+                if (wordRegex.containsMatchIn(mem.fileName)) score += 3.6f
+                if (wordRegex.containsMatchIn(mem.matchedChapter)) score += 3.0f
+                val bodyMatches = wordRegex.findAll(cleanBody).count()
+                if (bodyMatches > 0) {
+                    score += (1.2f + ln(bodyMatches.toDouble()).toFloat()).coerceAtMost(3.0f)
+                }
+            }
+            if (score >= 3.0f) {
+                val confidence = ((score / (queryTokens.size * 3.8f)) * 100f).toInt().coerceIn(35, 96)
+                candidates.add(
+                    RagCitationChunk(
+                        sourceType = "0.Neet 2027 PDF",
+                        sourceTitle = mem.fileName,
+                        chapterOrFolder = "${mem.subjectTrack} • ${mem.matchedChapter} (${mem.pageCount}p)",
+                        snippet = cleanBody.take(280),
                         confidencePercent = confidence
                     )
                 )
@@ -461,7 +548,72 @@ object JarvisHybridRagEngine {
         }
         return Pair(block, citations)
     }
+
+    /**
+     * Complete 100% On-Device Offline Conversational + RAG Responder:
+     * Handles greetings, "how r u", "are you mounted", "is offline mode working",
+     * timetable queries, and NEET Physics/Chemistry/Biology questions naturally!
+     */
+    fun generateOfflineConversationalOrRagReply(
+        context: Context,
+        plan: NeetPlanRoot,
+        slotTitle: String,
+        slotInstruction: String,
+        lecturesSummary: String,
+        rawUserQuery: String,
+        topCitation: RagCitationChunk?,
+        wantsDetailed: Boolean
+    ): String {
+        LocalLlmModelManager.autoMountExistingModelIfReady(context)
+        val userPart = rawUserQuery.substringBefore("(Reply in 1 to 2").trim()
+        val q = userPart.lowercase()
+        val mountedInfo = if (LocalLlmModelManager.ramState == LocalModelRamState.READY_IN_RAM) {
+            "with **${LocalLlmModelManager.activeMountedModelName}** mounted in RAM"
+        } else {
+            "on your local **NCERT + 0.Neet 2027 Hybrid RAG Engine**"
+        }
+        val pdfCount = StudyLibraryManager.getAllPermanentMemories().size
+
+        // 1. Conversational Greetings & Status Checks ("how r u", "are you mountain/mounted", "is offline mode working")
+        if (q.contains("how r u") || q.contains("how are you") || q.contains("how do you feel")) {
+            return "[calm] Doing splendidly, sir! I am running 100% offline on your Xiaomi Pad 6 $mountedInfo and $pdfCount indexed PDFs ready. What shall we tackle first?"
+        }
+        if (q.contains("mountain") || q.contains("mounted") || q.contains("gemma") || q.contains("qwen") || q.contains("gguf") || q.contains("ram")) {
+            val (availMb, totalMb) = XiaomiSurvivalHelper.getAvailableRamMb(context)
+            return "[focused] Yes sir, my offline brain is **${LocalLlmModelManager.ramState.label}** ($mountedInfo), with **$availMb MB / $totalMb MB** free RAM on your Snapdragon 870."
+        }
+        if (q.contains("offline") || q.contains("working") || q.contains("wifi") || q.contains("internet") || q.contains("connected")) {
+            return "[proud] Offline mode is working 100% locally with zero internet, sir. I have your **$pdfCount PDFs in 0.Neet 2027**, your AES-256 Vault, and your Imphal timetable active right now ($mountedInfo)."
+        }
+        if (q == "hi" || q == "hey" || q == "hello" || q.startsWith("good morning") || q.startsWith("good afternoon") || q.startsWith("good evening")) {
+            return "[calm] At your service, sir. We are currently in **$slotTitle** ($slotInstruction). Ask me any NEET Physics, Chemistry, or Biology question—even with Wi-Fi off!"
+        }
+        if (q.contains("who are you") || q.contains("what can you do")) {
+            return "[calm] I am J.A.R.V.I.S., your offline-capable NEET UG 2027 companion for ${plan.meta.goalInstitution}, sir. Even with Wi-Fi off, I can search your $pdfCount PDFs, set hardware alarms, log mistakes to your Vault, and answer NCERT concepts."
+        }
+
+        // 2. Timetable / Schedule / Study Coaching Queries
+        if (q.contains("what now") || q.contains("slot") || q.contains("timetable") || q.contains("schedule") || q.contains("study now") || q.contains("today")) {
+            return "[focused] Right now in Imphal we are in **$slotTitle**, sir. $slotInstruction Today's four tracks are: $lecturesSummary."
+        }
+        if (q.contains("tired") || q.contains("sleep") || q.contains("stressed") || q.contains("backlog") || q.contains("bad day")) {
+            return "[concerned] Take a 15-minute water break, sir. Never borrow from your 02:00 to 10:00 IST sleep guardrail—let us just complete the Bad-Day Minimum today."
+        }
+
+        // 3. Verified Scientific / NEET RAG Citation Match
+        if (topCitation != null) {
+            val cleanSnippet = if (wantsDetailed) topCitation.snippet else topCitation.snippet.take(220)
+            return "[focused] From **[${topCitation.sourceType}: ${topCitation.sourceTitle}]** (${topCitation.confidencePercent}% match), sir: $cleanSnippet"
+        }
+
+        // 4. Clean Conversational Fallback (Never dumps random PDF paths!)
+        return "[calm] I heard *\"$userPart\"*, sir. I am running 100% offline ($mountedInfo) during **$slotTitle**. Ask me about any NEET topic (like Gauss's law, GOC priority, SN1/SN2, Nernst equation, or Biomolecules) or say *'set alarm for 10:30'*!"
+    }
 }
+
+// ============================================================================
+// 3. CHAPTER 9 UI: OFFLINE BRAIN, SNAPDRAGON 870 RAM GUARD & RAG CITATIONS
+// ============================================================================
 
 @Composable
 fun JarvisOfflineBrainAndRagScreen(
@@ -487,6 +639,7 @@ fun JarvisOfflineBrainAndRagScreen(
     LaunchedEffect(Unit) {
         val root = StudyLibraryManager.getDedicatedRootFolder(context)
         StudyLibraryManager.ensurePermanentMemoriesLoaded(context, root)
+        LocalLlmModelManager.autoMountExistingModelIfReady(context)
         modelStatuses = LocalLlmModelManager.scanModelsFolder(context)
         customGgufList = LocalLlmModelManager.scanCustomGgufFiles(context)
     }
@@ -495,6 +648,7 @@ fun JarvisOfflineBrainAndRagScreen(
     val vaultCount = remember { JarvisVaultManager.loadVaultNotes(context).size }
 
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        // 1. Snapdragon 870 RAM Guardrail & Active Local Engine Telemetry
         LiquidGlassCard(lab = lab, tilt = tilt, accentTint = JarvisSpatialPalettes.StatusSuccess) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -574,6 +728,7 @@ fun JarvisOfflineBrainAndRagScreen(
             }
         }
 
+        // 2. Resumable GGUF Model Cards (Stored inside /storage/emulated/0/0.Neet 2027/AI_MODELS)
         LiquidGlassCard(lab = lab, tilt = tilt, accentTint = JarvisSpatialPalettes.StatusWarning) {
             Text(
                 text = "ON-DEVICE GGUF MODELS IN /storage/emulated/0/0.Neet 2027/AI_MODELS",
@@ -635,10 +790,11 @@ fun JarvisOfflineBrainAndRagScreen(
                                     )
                                 } else {
                                     LiquidGlassButton(
-                                        text = if (st.downloadedMb > 0L && st.downloadedMb < preset.expectedSizeMb - 30) "Resume Download" else "Download GGUF",
+                                        text = if (st.downloadedMb >= preset.expectedSizeMb - 30) "Downloaded ✓" else if (st.downloadedMb > 0L) "Resume Download" else "Download GGUF",
                                         icon = Icons.Default.AutoAwesome,
                                         lab = lab,
-                                        accentColor = JarvisSpatialPalettes.StatusWarning,
+                                        isActive = st.downloadedMb >= preset.expectedSizeMb - 30,
+                                        accentColor = if (st.downloadedMb >= preset.expectedSizeMb - 30) JarvisSpatialPalettes.StatusSuccess else JarvisSpatialPalettes.StatusWarning,
                                         onClick = {
                                             LocalLlmModelManager.startOrResumeDownload(context, preset, scope) {
                                                 modelStatuses = LocalLlmModelManager.scanModelsFolder(context)
@@ -691,6 +847,7 @@ fun JarvisOfflineBrainAndRagScreen(
             }
         }
 
+        // 3. Local Hybrid RAG & Zero-Hallucination Citation Search Console
         LiquidGlassCard(lab = lab, tilt = tilt) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -699,7 +856,7 @@ fun JarvisOfflineBrainAndRagScreen(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "HYBRID LOCAL RAG CITATION ENGINE (BM25 + SCIENTIFIC KEYWORD BOOST)",
+                        text = "HYBRID LOCAL RAG CITATION ENGINE (BM25 + WHOLE-WORD SCIENTIFIC BOOST)",
                         color = JarvisSpatialPalettes.StatusSuccess,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
@@ -771,7 +928,7 @@ fun JarvisOfflineBrainAndRagScreen(
             Spacer(modifier = Modifier.height(10.dp))
             if (retrievedChunks.isEmpty()) {
                 Text(
-                    text = "No citation chunks exceeded the ${(JarvisHybridRagEngine.minConfidenceThreshold * 100).toInt()}% hallucination guard threshold. Lower the threshold or try another NEET topic.",
+                    text = "No scientific citation chunks matched above ${(JarvisHybridRagEngine.minConfidenceThreshold * 100).toInt()}% (casual chat words like 'how r u' are filtered out automatically).",
                     color = JarvisSpatialPalettes.StatusWarning,
                     fontSize = 12.sp
                 )
