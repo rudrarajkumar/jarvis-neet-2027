@@ -70,10 +70,6 @@ import java.net.URL
 import kotlin.math.ln
 import kotlin.math.max
 
-// ============================================================================
-// 1. ON-DEVICE GGUF / LITERT MODEL MANAGER & SNAPDRAGON 870 RAM GUARDRAIL
-// ============================================================================
-
 enum class LocalModelRamState(val label: String) {
     UNLOADED("UNLOADED (0 MB RAM Used)"),
     LOADING("VERIFYING GGUF HEADER & MAPPING..."),
@@ -174,7 +170,6 @@ object LocalLlmModelManager {
             return statusBanner
         }
 
-        // Verify GGUF magic header ('GGUF' = 0x47, 0x47, 0x55, 0x46) if .gguf file
         val validHeader = runCatching {
             val header = ByteArray(4)
             modelFile.inputStream().use { it.read(header) }
@@ -236,7 +231,7 @@ object LocalLlmModelManager {
                     FileOutputStream(targetFile, isPartial).use { output ->
                         val buffer = ByteArray(64 * 1024)
                         var downloaded = if (isPartial) existingBytes else 0L
-                        var read: Int
+                        var read = 0
                         var lastUiUpdate = 0L
 
                         while (isActive && isDownloading && input.read(buffer).also { read = it } != -1) {
@@ -280,13 +275,9 @@ object LocalLlmModelManager {
     }
 }
 
-// ============================================================================
-// 2. HYBRID LOCAL RAG RETRIEVER (0.Neet 2027 PDFs + VAULT + NCERT KNOWLEDGE BANK)
-// ============================================================================
-
 @Serializable
 data class RagCitationChunk(
-    val sourceType: String, // "0.Neet 2027 PDF", "AES-256 Vault", "NCERT Core"
+    val sourceType: String,
     val sourceTitle: String,
     val chapterOrFolder: String,
     val snippet: String,
@@ -295,7 +286,7 @@ data class RagCitationChunk(
 
 object JarvisHybridRagEngine {
     var strictHallucinationGuard by mutableStateOf(true)
-    var minConfidenceThreshold by mutableFloatStateOf(0.35f) // 35%
+    var minConfidenceThreshold by mutableFloatStateOf(0.35f)
 
     private data class NcertCoreEntry(
         val subject: String,
@@ -304,7 +295,6 @@ object JarvisHybridRagEngine {
         val verifiedFact: String
     )
 
-    // Embedded High-Yield NCERT Class 11 & 12 Knowledge Graph for 100% Offline Grounding
     private val ncertKnowledgeGraph = listOf(
         NcertCoreEntry(
             subject = "Physics (Class 12 Ch 1)",
@@ -368,12 +358,6 @@ object JarvisHybridRagEngine {
         )
     )
 
-    /**
-     * Retrieves top-K grounded citations across:
-     * 1. `/storage/emulated/0/0.Neet 2027` Permanent PDF Memories
-     * 2. AES-256 Encrypted Vault & Mistake Notebook
-     * 3. Embedded NCERT Class 11 & 12 Knowledge Graph
-     */
     fun retrieveTopCitations(context: Context, query: String, topK: Int = 3): List<RagCitationChunk> {
         val cleanQ = query.lowercase().replace(Regex("[^a-z0-9\\s]"), " ")
         val stopWords = setOf(
@@ -385,7 +369,6 @@ object JarvisHybridRagEngine {
 
         val candidates = mutableListOf<RagCitationChunk>()
 
-        // 1. Search Permanent PDF Memories from `/storage/emulated/0/0.Neet 2027`
         val neetRoot = StudyLibraryManager.getDedicatedRootFolder(context)
         StudyLibraryManager.ensurePermanentMemoriesLoaded(context, neetRoot)
         val pdfMemories = StudyLibraryManager.getAllPermanentMemories()
@@ -415,7 +398,6 @@ object JarvisHybridRagEngine {
             }
         }
 
-        // 2. Search AES-256 Encrypted Vault & Mistake Notebook
         val vaultNotes = JarvisVaultManager.loadVaultNotes(context)
         vaultNotes.forEach { note ->
             val combined = "${note.title} ${note.folder} ${note.tags.joinToString(" ")} ${note.markdownBody}".lowercase()
@@ -439,7 +421,6 @@ object JarvisHybridRagEngine {
             }
         }
 
-        // 3. Search Embedded NCERT Class 11 & 12 Knowledge Graph
         ncertKnowledgeGraph.forEach { entry ->
             var score = 0f
             queryTokens.forEach { tok ->
@@ -468,10 +449,6 @@ object JarvisHybridRagEngine {
             .take(topK)
     }
 
-    /**
-     * Builds a grounded context block for Cloud Gemini OR a complete cited offline answer
-     * when running 100% on-device.
-     */
     fun buildRagContextBlockForPrompt(context: Context, userQuery: String): Pair<String, List<RagCitationChunk>> {
         val citations = retrieveTopCitations(context, userQuery, topK = 3)
         if (citations.isEmpty()) return Pair("", emptyList())
@@ -485,10 +462,6 @@ object JarvisHybridRagEngine {
         return Pair(block, citations)
     }
 }
-
-// ============================================================================
-// 3. CHAPTER 9 UI: OFFLINE BRAIN, SNAPDRAGON 870 RAM GUARD & RAG CITATIONS
-// ============================================================================
 
 @Composable
 fun JarvisOfflineBrainAndRagScreen(
@@ -522,7 +495,6 @@ fun JarvisOfflineBrainAndRagScreen(
     val vaultCount = remember { JarvisVaultManager.loadVaultNotes(context).size }
 
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        // 1. Snapdragon 870 RAM Guardrail & Active Local Engine Telemetry
         LiquidGlassCard(lab = lab, tilt = tilt, accentTint = JarvisSpatialPalettes.StatusSuccess) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -602,7 +574,6 @@ fun JarvisOfflineBrainAndRagScreen(
             }
         }
 
-        // 2. Resumable GGUF Model Cards (Stored inside /storage/emulated/0/0.Neet 2027/AI_MODELS)
         LiquidGlassCard(lab = lab, tilt = tilt, accentTint = JarvisSpatialPalettes.StatusWarning) {
             Text(
                 text = "ON-DEVICE GGUF MODELS IN /storage/emulated/0/0.Neet 2027/AI_MODELS",
@@ -720,7 +691,6 @@ fun JarvisOfflineBrainAndRagScreen(
             }
         }
 
-        // 3. Local Hybrid RAG & Zero-Hallucination Citation Search Console
         LiquidGlassCard(lab = lab, tilt = tilt) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
