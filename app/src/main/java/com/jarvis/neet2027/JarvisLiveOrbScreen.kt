@@ -153,7 +153,6 @@ fun JarvisLiveParticleOrbPage(
     var lastEmotion by remember { mutableStateOf("calm") }
     var textDraft by remember { mutableStateOf("") }
 
-    // Tracks whether we are in an active hands-free Gemini Live continuous conversation
     var isLiveSessionActive by remember { mutableStateOf(false) }
     var consecutiveSilenceCount by remember { mutableIntStateOf(0) }
     var lastHandledWakeTick by remember { mutableIntStateOf(0) }
@@ -162,10 +161,8 @@ fun JarvisLiveParticleOrbPage(
     DisposableEffect(context) {
         var engine: TextToSpeech? = null
         engine = TextToSpeech(context) { status ->
-            if (status == TextToSpeech.SUCCESS) {
-                engine?.language = Locale.UK
-                engine?.setPitch(0.88f)
-                engine?.setSpeechRate(1.05f)
+            if (status == TextToSpeech.SUCCESS && engine != null) {
+                JarvisVoiceOutputController.applyConfiguredVoiceAndProsody(context, engine!!, "calm")
             }
         }
         ttsEngine = engine
@@ -181,7 +178,6 @@ fun JarvisLiveParticleOrbPage(
         } else null
     }
 
-    // Dynamic acoustic pulsation for the 3D hologram particles
     LaunchedEffect(orbMode, SharedMicAndWakeManager.livePeakNormalized) {
         if (orbMode == VoiceOrbState.IDLE) {
             liveSoundLevel = SharedMicAndWakeManager.livePeakNormalized.coerceAtLeast(0.08f)
@@ -217,7 +213,6 @@ fun JarvisLiveParticleOrbPage(
             SharedMicAndWakeManager.stopBargeInMonitor()
             ttsEngine?.stop()
 
-            // Release AudioRecord hardware lock first so SpeechRecognizer never conflicts
             SharedMicAndWakeManager.pauseStreamForSpeechTurn()
 
             orbMode = VoiceOrbState.LISTENING
@@ -253,22 +248,9 @@ fun JarvisLiveParticleOrbPage(
         }
         tts.stop()
 
-        when (emotionTag) {
-            "urgent", "focused" -> {
-                tts.setPitch(0.92f)
-                tts.setSpeechRate(1.08f)
-            }
-            "concerned" -> {
-                tts.setPitch(0.85f)
-                tts.setSpeechRate(0.98f)
-            }
-            else -> {
-                tts.setPitch(0.88f)
-                tts.setSpeechRate(1.05f)
-            }
-        }
+        // Apply Chapter 8 British Butler Voice + 7-Emotion Prosody Profile
+        val prosody = JarvisVoiceOutputController.applyConfiguredVoiceAndProsody(context, tts, emotionTag)
 
-        // Format for natural Gemini Live conversation: 1-3 crisp sentences unless user asked for detail
         val clean = replyText.replace("*", "").replace("#", "").trim()
         val allSentences = clean.split(Regex("(?<=[.!?])\\s+")).filter { it.isNotBlank() }
         val spokenSentences = if (isDetailedRequested) {
@@ -285,9 +267,8 @@ fun JarvisLiveParticleOrbPage(
 
         orbMode = VoiceOrbState.SPEAKING
 
-        // Start Real-Time Voice & Clap Barge-In Monitor while Jarvis speaks!
+        // Real-Time Voice & Clap Barge-In Monitor while Jarvis speaks
         SharedMicAndWakeManager.startBargeInMonitorDuringTts(context) { interruptReason ->
-            // User spoke over Jarvis or double-clapped mid-sentence -> cut TTS immediately & listen!
             tts.stop()
             SharedMicAndWakeManager.playWakeActivationChime()
             startGeminiLiveListeningTurn(interruptReason)
@@ -303,8 +284,7 @@ fun JarvisLiveParticleOrbPage(
                     SharedMicAndWakeManager.stopBargeInMonitor()
                     scope.launch(Dispatchers.Main) {
                         if (isLiveSessionActive) {
-                            // Gemini Live continuous turn-taking: immediately listen for user's next reply!
-                            delay(220L)
+                            delay(prosody.sentencePauseMs.coerceAtLeast(180L))
                             startGeminiLiveListeningTurn("GEMINI_LIVE_LOOP")
                         } else {
                             stopGeminiLiveAndRearmClap()
@@ -327,9 +307,11 @@ fun JarvisLiveParticleOrbPage(
             }
         })
 
+        // Apply Chapter 8 NEET UG 2027 Pronunciation Lexicon to each sentence before speaking
         spokenSentences.forEachIndexed { idx, sentence ->
+            val phoneticSentence = JarvisVoiceOutputController.applyLexiconForSpeech(context, sentence)
             val mode = if (idx == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
-            tts.speak(sentence, mode, null, "live_utt_$idx")
+            tts.speak(phoneticSentence, mode, null, "live_utt_$idx")
         }
     }
 
@@ -338,10 +320,10 @@ fun JarvisLiveParticleOrbPage(
         if (clean.isEmpty()) return
 
         val lower = clean.lowercase()
-        // Voice command to exit Gemini Live continuous loop
         if (lower == "stop" || lower == "stop listening" || lower == "exit" || lower == "pause" || lower == "goodbye" || lower == "bye jarvis") {
             lastJarvisSpoken = "Standing by, sir. Double-clap anytime you need me."
-            ttsEngine?.speak(lastJarvisSpoken, TextToSpeech.QUEUE_FLUSH, null, "goodbye_utt")
+            val phoneticBye = JarvisVoiceOutputController.applyLexiconForSpeech(context, lastJarvisSpoken)
+            ttsEngine?.speak(phoneticBye, TextToSpeech.QUEUE_FLUSH, null, "goodbye_utt")
             stopGeminiLiveAndRearmClap("Standing by — Double-Clap anytime to wake!")
             return
         }
@@ -349,7 +331,6 @@ fun JarvisLiveParticleOrbPage(
         val wantsDetailed = lower.contains("detail") || lower.contains("elaborate") ||
             lower.contains("in depth") || lower.contains("step by step") || lower.contains("derive")
 
-        // Prompt instruction so Jarvis speaks like Gemini Live (short, punchy, conversational) unless asked for detail
         val liveConversationalQuery = if (wantsDetailed) {
             clean
         } else {
@@ -422,7 +403,6 @@ fun JarvisLiveParticleOrbPage(
             override fun onError(error: Int) {
                 if (isLiveSessionActive) {
                     consecutiveSilenceCount++
-                    // If user stays silent for 2 consecutive turns, gracefully pause Gemini Live and re-arm Double-Clap!
                     if (consecutiveSilenceCount >= 2) {
                         stopGeminiLiveAndRearmClap("No speech detected — Re-armed Double-Clap Guardian.")
                     } else {
@@ -469,7 +449,6 @@ fun JarvisLiveParticleOrbPage(
         onDispose {
             SharedMicAndWakeManager.stopBargeInMonitor()
             speechRecognizer?.destroy()
-            // Ensure Double-Clap Guardian is re-armed if user navigates away from Live Orb
             SharedMicAndWakeManager.endGeminiLiveAndRearmClapGuard(context)
         }
     }
@@ -482,15 +461,12 @@ fun JarvisLiveParticleOrbPage(
         }
     }
 
-    // Ensure Double-Clap Guardian is armed when sitting idle on Live Orb
     LaunchedEffect(Unit) {
         if (SharedMicAndWakeManager.userWantsStreamArmed && !SharedMicAndWakeManager.isGeminiLiveSessionActive) {
             SharedMicAndWakeManager.startSharedMicStream(context)
         }
     }
 
-    // OBSERVE UNIVERSAL DOUBLE-CLAP EVENT TICK:
-    // Whenever you Double-Clap on ANY tab (or on Live Orb itself), this fires immediately!
     val currentWakeTick = SharedMicAndWakeManager.liveOrbWakeEventTick
     LaunchedEffect(currentWakeTick) {
         if (currentWakeTick > 0 && currentWakeTick != lastHandledWakeTick) {
@@ -546,7 +522,6 @@ fun JarvisLiveParticleOrbPage(
                     shape = RoundedCornerShape(28.dp)
                 )
         ) {
-            // 1. Exact 3D Hologram Orb from Video (Green & Yellow Sound-Reactive Particles)
             VideoHologram3DOrbCanvas(
                 orbState = orbMode,
                 chromaMode = chromaMode,
@@ -558,7 +533,6 @@ fun JarvisLiveParticleOrbPage(
                     if (!hasMic) {
                         micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                     } else if (orbMode == VoiceOrbState.SPEAKING) {
-                        // Tapping orb while Jarvis speaks barges in immediately!
                         startGeminiLiveListeningTurn("ORB_BARGE_IN")
                     } else if (isLiveSessionActive || orbMode == VoiceOrbState.LISTENING) {
                         stopGeminiLiveAndRearmClap("Stopped by tap — Double-Clap anytime to wake!")
@@ -569,7 +543,6 @@ fun JarvisLiveParticleOrbPage(
                 modifier = Modifier.fillMaxSize()
             )
 
-            // 2. Top Adaptive Header Bar with Live dBFS, Clap Counter & Barge-In Status
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -593,7 +566,7 @@ fun JarvisLiveParticleOrbPage(
                         )
                     }
                     Text(
-                        text = "State: ${orbMode.name} • Mic: ${"%.1f".format(SharedMicAndWakeManager.liveMicDb)} dBFS • Claps: ${SharedMicAndWakeManager.totalClapTriggers} • Barge-Ins: ${SharedMicAndWakeManager.totalBargeInTriggers}",
+                        text = "State: ${orbMode.name} [${lastEmotion.uppercase()}] • Mic: ${"%.1f".format(SharedMicAndWakeManager.liveMicDb)} dBFS • Claps: ${SharedMicAndWakeManager.totalClapTriggers} • Barge-Ins: ${SharedMicAndWakeManager.totalBargeInTriggers}",
                         color = secondaryAccent,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium
@@ -603,7 +576,6 @@ fun JarvisLiveParticleOrbPage(
                 Spacer(modifier = Modifier.width(12.dp))
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    // 1-Tap Colour Mode Toggle
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(14.dp))
@@ -622,7 +594,6 @@ fun JarvisLiveParticleOrbPage(
                         }
                     }
 
-                    // Start / End Gemini Live Button
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(14.dp))
@@ -664,7 +635,6 @@ fun JarvisLiveParticleOrbPage(
                         }
                     }
 
-                    // Barge-In / Replay Voice Button
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(14.dp))
@@ -694,7 +664,6 @@ fun JarvisLiveParticleOrbPage(
                 }
             }
 
-            // 3. Bottom Adaptive Transcript & Floating Glass Input Dock
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -983,7 +952,6 @@ private fun VideoHologram3DOrbCanvas(
         val globalRx = sin(spinPrecession) * 0.32f + (tilt.y * 0.03f)
         val globalRy = spinPrimary + (tilt.x * 0.03f)
 
-        // LAYER 1: DENSE TANGLED WIREFRAME INNER CORE SPHERE
         val coreSteps = 28
         coreLoops.forEach { loop ->
             var prevPt: Offset? = null
@@ -1021,7 +989,6 @@ private fun VideoHologram3DOrbCanvas(
             }
         }
 
-        // LAYER 2: TWO STEEPLY TILTED GYROSCOPIC PARTICLE RINGS
         var prevRing0: Offset? = null
         var prevRing1: Offset? = null
 
@@ -1081,7 +1048,6 @@ private fun VideoHologram3DOrbCanvas(
             )
         }
 
-        // LAYER 3: OUTER BROKEN TECTONIC CIRCUIT-TRACE SHELL
         val shellRx = globalRx * 0.85f
         val shellRy = -globalRy * 0.75f
         val shellRz = sin(spinPrimary * 0.5f) * 0.25f
