@@ -78,6 +78,10 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.time.format.DateTimeFormatter
 
+// ============================================================================
+// 1. 12-POINT HARDWARE, PERMISSION & ARCHITECTURE SELF-AUDIT ENGINE
+// ============================================================================
+
 data class SelfAuditCheckItem(
     val id: Int,
     val subsystem: String,
@@ -108,10 +112,19 @@ data class GitHubReleaseAssetSummary(
 )
 
 @Serializable
+data class BackupVaultNoteSnapshot(
+    val title: String,
+    val folder: String,
+    val tags: List<String>,
+    val markdownBody: String,
+    val recallStagesDone: List<String>
+)
+
+@Serializable
 data class JarvisFullBackupSnapshot(
     val exportedAtIst: String,
     val goalInstitution: String,
-    val vaultNotes: List<JarvisVaultNote>,
+    val vaultNotes: List<BackupVaultNoteSnapshot>,
     val lexiconRules: List<PronunciationLexiconRule>,
     val recentChatHistory: List<ChatMessageItem>
 )
@@ -145,7 +158,7 @@ object JarvisSelfAuditEngine {
         val hasLocalGguf = modelsScanned.any { it.existsOnDisk } ||
             LocalLlmModelManager.ramState == LocalModelRamState.READY_IN_RAM
 
-        val totalLecturesCount = plan.videoCountAudit.totalCompleted + plan.videoCountAudit.totalRemaining
+        val totalLecturesCount = plan.videoCountAudit.totalKnownCompleted + plan.videoCountAudit.totalKnownRemaining
 
         return listOf(
             SelfAuditCheckItem(
@@ -237,7 +250,7 @@ object JarvisSelfAuditEngine {
                 id = 12,
                 subsystem = "NEET 2027 PLANNER",
                 title = "4-Track Timetable, Native Alarms & AIIMS Nagpur Target",
-                detail = "$totalLecturesCount total lectures • Target AIR <= ${plan.meta.aiimsNagpurCutoffs2026Round1.ASPIRATIONAL_OPEN_BUFFER} ✓",
+                detail = "${plan.videoCountAudit.totalKnownRemaining} remaining of $totalLecturesCount lectures • Target AIR <= ${plan.meta.aiimsNagpurCutoffs2026Round1.ASPIRATIONAL_OPEN_BUFFER} ✓",
                 passed = totalLecturesCount > 0
             )
         )
@@ -360,10 +373,20 @@ object JarvisSelfAuditEngine {
             val stamp = nowIst.format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"))
             val targetFile = File(backupDir, "jarvis_neet2027_backup_$stamp.json")
 
+            val mappedVaultNotes = JarvisVaultManager.loadVaultNotes(context).map { n ->
+                BackupVaultNoteSnapshot(
+                    title = n.title,
+                    folder = n.folder,
+                    tags = n.tags,
+                    markdownBody = n.markdownBody,
+                    recallStagesDone = n.recallStagesDone
+                )
+            }
+
             val snapshot = JarvisFullBackupSnapshot(
                 exportedAtIst = nowIst.format(DateTimeFormatter.ofPattern("yyyy-MM-dd hh:mm:ss a 'IST'")),
                 goalInstitution = plan.meta.goalInstitution,
-                vaultNotes = JarvisVaultManager.loadVaultNotes(context),
+                vaultNotes = mappedVaultNotes,
                 lexiconRules = JarvisVoiceOutputController.loadLexiconRules(context),
                 recentChatHistory = chatMessages.takeLast(50)
             )
@@ -390,19 +413,37 @@ object JarvisSelfAuditEngine {
             val snapshot = jsonParser.decodeFromString<JarvisFullBackupSnapshot>(
                 latestFile.readText(Charsets.UTF_8)
             )
-            JarvisVaultManager.saveVaultNotes(context, snapshot.vaultNotes)
+
+            val existingTitles = JarvisVaultManager.loadVaultNotes(context).map { it.title }.toSet()
+            var restoredNoteCount = 0
+            snapshot.vaultNotes.forEach { backedUpNote ->
+                if (backedUpNote.title !in existingTitles) {
+                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_SUBJECT, backedUpNote.title)
+                        putExtra(Intent.EXTRA_TEXT, backedUpNote.markdownBody)
+                    }
+                    JarvisVaultManager.handleSharedIncomingIntent(context, shareIntent)
+                    restoredNoteCount++
+                }
+            }
+
             JarvisVoiceOutputController.saveLexiconRules(context, snapshot.lexiconRules)
             if (snapshot.recentChatHistory.isNotEmpty()) {
                 chatMessages.clear()
                 chatMessages.addAll(snapshot.recentChatHistory)
                 EncryptedKeyStoreVault.saveChatHistory(context, chatMessages)
             }
-            "✓ Restored ${snapshot.vaultNotes.size} Vault notes, ${snapshot.lexiconRules.size} Lexicon rules & ${snapshot.recentChatHistory.size} messages from ${latestFile.name}!"
+            "✓ Restored $restoredNoteCount missing Vault notes (${snapshot.vaultNotes.size} in backup), ${snapshot.lexiconRules.size} Lexicon rules & ${snapshot.recentChatHistory.size} messages from ${latestFile.name}!"
         }.getOrElse { err ->
             "Restore note: ${err.message}"
         }
     }
 }
+
+// ============================================================================
+// 2. CHAPTER 11 UI: SELF-AUDIT, GITHUB CI INSPECTOR, OTA UPDATER & BACKUP
+// ============================================================================
 
 @Composable
 fun JarvisSelfAuditAndOtaScreen(
@@ -470,6 +511,7 @@ fun JarvisSelfAuditAndOtaScreen(
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        // 1. Master Production Readiness & Spoken Diagnostic Briefing Card
         LiquidGlassCard(lab = lab, tilt = tilt, accentTint = JarvisSpatialPalettes.StatusSuccess) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -532,6 +574,7 @@ fun JarvisSelfAuditAndOtaScreen(
             }
         }
 
+        // 2. 1-Tap OTA APK Release Downloader & Live GitHub Actions CI Monitor
         LiquidGlassCard(lab = lab, tilt = tilt, accentTint = JarvisSpatialPalettes.StatusWarning) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -664,6 +707,7 @@ fun JarvisSelfAuditAndOtaScreen(
             }
         }
 
+        // 3. 1-Tap Snapshot Backup & Restore to /storage/emulated/0/0.Neet 2027/JARVIS_BACKUPS
         LiquidGlassCard(lab = lab, tilt = tilt) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -717,6 +761,7 @@ fun JarvisSelfAuditAndOtaScreen(
             }
         }
 
+        // 4. 12-Point Hardware & Architecture Diagnostic Matrix
         LiquidGlassCard(lab = lab, tilt = tilt) {
             Text(
                 text = "12-POINT HARDWARE, PERMISSION & ARCHITECTURE DIAGNOSTIC MATRIX",
