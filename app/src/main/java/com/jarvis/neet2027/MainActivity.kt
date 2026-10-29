@@ -410,6 +410,7 @@ private enum class JarvisNavTab(val label: String, val icon: ImageVector) {
     VOICE_MIC("Voice & Mic", Icons.Default.Mic),
     BUTLER_TTS("Butler TTS", Icons.Default.VolumeUp),
     OFFLINE_RAG("Offline RAG", Icons.Default.Memory),
+    VISION_HUD("Vision & HUD", Icons.Default.Bolt),
     STUDY_LIBRARY("0.Neet 2027", Icons.Default.Folder),
     VAULT_TOOLS("Vault", Icons.Default.Lock),
     NEET_COMMAND("NEET Hub", Icons.Default.Schedule),
@@ -880,7 +881,7 @@ object JarvisBrainEngine {
 }
 
 // ============================================================================
-// 5. MAIN ACTIVITY & CHAPTER 9 SPATIAL ROOT COMPOSABLE
+// 5. MAIN ACTIVITY & CHAPTER 10 SPATIAL ROOT COMPOSABLE
 // ============================================================================
 
 class MainActivity : ComponentActivity() {
@@ -893,7 +894,7 @@ class MainActivity : ComponentActivity() {
         latestShareBanner = JarvisVaultManager.handleSharedIncomingIntent(this, intent)
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
-                JarvisChapterNineApp(initialShareBanner = latestShareBanner)
+                JarvisChapterTenApp(initialShareBanner = latestShareBanner)
             }
         }
     }
@@ -908,7 +909,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun JarvisChapterNineApp(initialShareBanner: String? = null) {
+fun JarvisChapterTenApp(initialShareBanner: String? = null) {
     val context = LocalContext.current
     val plan = remember { NeetPlanRepository.loadPlan(context) }
     val masterPrompt = remember { NeetPlanRepository.loadMasterPrompt(context) }
@@ -935,9 +936,9 @@ fun JarvisChapterNineApp(initialShareBanner: String? = null) {
                     ChatMessageItem(
                         id = 1L,
                         role = "jarvis",
-                        visibleText = "At your service, sir. Chapter 9 Offline Brain, Snapdragon 870 RAM Guardrail & Hybrid Local RAG Citations are online. Double-clap on any tab to launch Gemini Live.",
+                        visibleText = "At your service, sir. Chapter 10 Multimodal Vision Solver & Draggable Floating HUD Pill are online. Double-clap on any tab to launch Gemini Live.",
                         emotionTag = "calm",
-                        engineBadge = "HYBRID RAG READY",
+                        engineBadge = "VISION + HUD READY",
                         timestampIst = "ONLINE"
                     )
                 )
@@ -1021,6 +1022,13 @@ fun JarvisChapterNineApp(initialShareBanner: String? = null) {
                 JarvisNavTab.OFFLINE_RAG -> JarvisOfflineBrainAndRagScreen(
                     plan = plan,
                     lab = lab,
+                    tilt = tilt
+                )
+                JarvisNavTab.VISION_HUD -> JarvisVisionAndOcrScreen(
+                    plan = plan,
+                    lab = lab,
+                    committedModelId = committedModelId,
+                    forceOffline = forceOfflineRouter,
                     tilt = tilt
                 )
                 JarvisNavTab.STUDY_LIBRARY -> StudyLibraryScreen(
@@ -1189,7 +1197,7 @@ fun JarvisChapterNineApp(initialShareBanner: String? = null) {
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "J.A.R.V.I.S. // CHAPTER 9 OFFLINE BRAIN & HYBRID RAG ONLINE",
+                        text = "J.A.R.V.I.S. // CHAPTER 10 MULTIMODAL VISION & FLOATING HUD ONLINE",
                         color = palette.accentPrimary,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
@@ -1197,7 +1205,7 @@ fun JarvisChapterNineApp(initialShareBanner: String? = null) {
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "0ms Wi-Fi Off Auto-Switch • Gemma 3 1B + 1,363 PDFs • Universal Double-Clap Gemini Live",
+                        text = "Camera/Gallery NEET MCQ Solver • Floating HUD Pill • Universal Double-Clap Gemini Live",
                         color = palette.textSecondary,
                         fontSize = 13.sp
                     )
@@ -2004,7 +2012,7 @@ private fun TopSpatialHeader(
                     Box(modifier = Modifier.size(9.dp).clip(CircleShape).background(JarvisSpatialPalettes.StatusError))
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
-                        text = "J.A.R.V.I.S. // ${if (!isOnlineNow || forceOffline) "OFFLINE BRAIN (${LocalLlmModelManager.activeMountedModelName.take(22)})" else committedModelId.ifBlank { "GEMINI 3.8 + RAG" }}",
+                        text = "J.A.R.V.I.S. // ${if (!isOnlineNow || forceOffline) "OFFLINE BRAIN (${LocalLlmModelManager.activeMountedModelName.take(22)})" else committedModelId.ifBlank { "GEMINI 3.8 + VISION" }}",
                         color = if (!isOnlineNow || forceOffline) JarvisSpatialPalettes.StatusSuccess else JarvisSpatialPalettes.StatusWarning,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
