@@ -304,7 +304,7 @@ object JarvisSelfAuditEngine {
             val assetName = firstAsset?.get("name")?.jsonPrimitive?.content ?: "Jarvis-NEET2027.apk"
             val sizeBytes = firstAsset?.get("size")?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
             val sizeMb = "%.1f MB".format(sizeBytes.toFloat() / (1024f * 1024f))
-            val dlUrl = firstAsset?.get("browser_download_url"]?.jsonPrimitive?.content
+            val dlUrl = firstAsset?.get("browser_download_url")?.jsonPrimitive?.content
                 ?: "https://github.com/$GITHUB_REPO/releases/download/latest-apk/Jarvis-NEET2027.apk"
             GitHubReleaseAssetSummary(
                 tagName = tag,
