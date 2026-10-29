@@ -768,17 +768,17 @@ fun JarvisVisionAndOcrScreen(
                         lab = lab,
                         accentColor = JarvisSpatialPalettes.StatusWarning,
                         onClick = {
-                            JarvisVaultManager.createOrUpdateNote(
-                                context = context,
-                                existingId = null,
-                                title = "Visual MCQ: ${questionHintInput.take(42).ifBlank { "Diagram Analysis" }}",
-                                folder = "Mistake Notebook",
-                                tags = listOf("vision-mcq", "neet-2027", "d0-d30"),
-                                markdownBody = "Prompt: $questionHintInput\nCitation: ${solveOutcome.matchedRagCitation}\n\n${solveOutcome.stepByStepSolution}",
-                                isMistakeEntry = true,
-                                errorCause = "Visual MCQ / Diagram Review"
-                            )
-                            statusMessage = "✓ Logged solved visual MCQ to your AES-256 Mistake Notebook (D0-D30 Recall Armed)!"
+                            scope.launch {
+                                val summary = "log mistake: Visual MCQ (${questionHintInput.take(45).ifBlank { "Diagram Analysis" }}) — ${solveOutcome.matchedRagCitation}: ${solveOutcome.stepByStepSolution.take(220)}"
+                                val outcome = JarvisAutonomousToolRouter.evaluateAndRunAutonomousTools(
+                                    context = context,
+                                    plan = plan,
+                                    userQuery = summary
+                                )
+                                statusMessage = outcome.toolSummaryBanner.ifBlank {
+                                    "✓ Logged solved visual MCQ to your AES-256 Mistake Notebook (D0-D30 Recall Armed)!"
+                                }
+                            }
                         }
                     )
                 }
