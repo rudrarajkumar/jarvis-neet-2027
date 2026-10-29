@@ -173,6 +173,10 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
+// ============================================================================
+// 1. XIAOMI PAD 6 HYPEROS SURVIVAL & HARDWARE PERMISSION HELPER
+// ============================================================================
+
 object XiaomiSurvivalHelper {
     fun isIgnoringBatteryOptimizations(context: Context): Boolean {
         val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -247,6 +251,10 @@ object XiaomiSurvivalHelper {
         context.startActivity(intent)
     }
 }
+
+// ============================================================================
+// 2. SPATIAL LIQUID GLASS PALETTES & CONTROLLER
+// ============================================================================
 
 data class JarvisPalettePreset(
     val id: String,
@@ -401,6 +409,7 @@ private enum class JarvisNavTab(val label: String, val icon: ImageVector) {
     LIVE_ORB("Live Orb", Icons.Default.GraphicEq),
     VOICE_MIC("Voice & Mic", Icons.Default.Mic),
     BUTLER_TTS("Butler TTS", Icons.Default.VolumeUp),
+    OFFLINE_RAG("Offline RAG", Icons.Default.Memory),
     STUDY_LIBRARY("0.Neet 2027", Icons.Default.Folder),
     VAULT_TOOLS("Vault", Icons.Default.Lock),
     NEET_COMMAND("NEET Hub", Icons.Default.Schedule),
@@ -422,6 +431,10 @@ data class ChatMessageItem(
     val engineBadge: String = "CLOUD",
     val timestampIst: String = ""
 )
+
+// ============================================================================
+// 3. HARDWARE AES-256-GCM KEYSTORE VAULT
+// ============================================================================
 
 object EncryptedKeyStoreVault {
     private const val ANDROID_KEYSTORE = "AndroidKeyStore"
@@ -539,6 +552,10 @@ object EncryptedKeyStoreVault {
             .apply()
     }
 }
+
+// ============================================================================
+// 4. HYBRID CLOUD + OFFLINE RAG BRAIN ENGINE
+// ============================================================================
 
 data class DiscoveredModelInfo(
     val id: String,
@@ -695,24 +712,15 @@ object JarvisBrainEngine {
             todayLectures.joinToString(" | ") { "${it.trackId}: ${it.chapterTitle} (L${it.lectureNumberInChapter}/${it.totalLecturesInChapter})" }
         }
 
+        // 1. Evaluate Autonomous Tools (alarms, mistake logs, calendar events, destructive confirmations)
         val toolOutcome = JarvisAutonomousToolRouter.evaluateAndRunAutonomousTools(context, plan, userQuery)
         val toolPrefix = if (toolOutcome.toolSummaryBanner.isNotBlank()) "${toolOutcome.toolSummaryBanner}\n\n" else ""
 
-        val rootFolder = StudyLibraryManager.getDedicatedRootFolder(context)
-        StudyLibraryManager.ensurePermanentMemoriesLoaded(context, rootFolder)
-        val allMemories = StudyLibraryManager.getAllPermanentMemories()
-        val keywords = userQuery.lowercase().split(" ").filter {
-            it.length >= 4 && it !in listOf("jarvis", "find", "notes", "open", "explain", "what", "from", "reply", "natural", "sentences")
-        }
-        val matchedMemory = allMemories.firstOrNull { mem ->
-            keywords.any { kw ->
-                mem.fileName.contains(kw, ignoreCase = true) ||
-                    mem.matchedChapter.contains(kw, ignoreCase = true) ||
-                    mem.extractedMemoryText.contains(kw, ignoreCase = true)
-            }
-        }
-        val memoryContextBlock = if (matchedMemory != null) {
-            "\nPERMANENT PDF MEMORY FROM 0.Neet 2027 (${matchedMemory.relativePath}):\n${matchedMemory.extractedMemoryText.take(1400)}"
+        // 2. Chapter 9 Hybrid Local RAG Retrieval (0.Neet 2027 PDFs + Vault Notes + NCERT Core Graph)
+        val (ragContextBlock, ragCitations) = JarvisHybridRagEngine.buildRagContextBlockForPrompt(context, userQuery)
+        val topCitation = ragCitations.firstOrNull()
+        val citationBadgeSuffix = if (topCitation != null) {
+            " • Cited: ${topCitation.sourceTitle.take(18)} (${topCitation.confidencePercent}%)"
         } else ""
 
         val lowerQ = userQuery.lowercase()
@@ -723,14 +731,22 @@ object JarvisBrainEngine {
         val privacyLock = EncryptedKeyStoreVault.isOfflinePrivacyLockEnabled(context)
 
         if (forceOffline || privacyLock || apiKey.isBlank()) {
-            val offlineText = buildOfflinePlanReply(plan, activeSlot.title, activeSlot.instruction, lecturesSummary, userQuery, matchedMemory)
+            val offlineText = buildOfflinePlanReply(
+                plan = plan,
+                slotTitle = activeSlot.title,
+                slotInstruction = activeSlot.instruction,
+                lecturesSummary = lecturesSummary,
+                query = userQuery,
+                topCitation = topCitation,
+                wantsDetailed = wantsDetailed
+            )
             val (emotion, cleaned) = parseEmotionAndCleanText(offlineText)
             return@withContext ChatMessageItem(
                 id = System.currentTimeMillis(),
                 role = "jarvis",
                 visibleText = formatScientificNotation(toolPrefix + cleaned),
                 emotionTag = emotion,
-                engineBadge = "OFFLINE BRAIN (0 BYTES SENT)",
+                engineBadge = "OFFLINE RAG ($citationBadgeSuffix)",
                 timestampIst = timeStamp
             )
         }
@@ -744,9 +760,9 @@ object JarvisBrainEngine {
         ).distinct()
 
         val conversationalRule = if (wantsDetailed) {
-            "The user requested a detailed explanation: provide a thorough, structured breakdown."
+            "The user requested a detailed explanation: provide a thorough, structured breakdown and cite the VERIFIED LOCAL RAG CITATIONS if relevant."
         } else {
-            "GEMINI LIVE CONVERSATIONAL VOICE RULE: Keep your response SHORT, NATURAL, and CONVERSATIONAL (1 to 3 sentences maximum, ~25 to 45 words) so it feels like a real-time voice chat. Do NOT output long paragraphs or bullet lists unless explicitly asked to explain in detail."
+            "GEMINI LIVE CONVERSATIONAL VOICE RULE: Keep your response SHORT, NATURAL, and CONVERSATIONAL (1 to 3 sentences maximum, ~25 to 45 words) so it feels like a real-time voice chat. Ground your facts in the VERIFIED LOCAL RAG CITATIONS below."
         }
 
         val liveContextHeader = """
@@ -758,7 +774,7 @@ object JarvisBrainEngine {
             - Local Time: $timeStamp (${nowIst.toLocalDate()})
             - Active Timetable Slot: ${activeSlot.title} (${activeSlot.startTime}-${activeSlot.endTime}) -> ${activeSlot.instruction}
             - Today's 4-Track Queue: $lecturesSummary
-            $memoryContextBlock
+            $ragContextBlock
         """.trimIndent()
 
         for (candidateId in candidateChain) {
@@ -825,20 +841,28 @@ object JarvisBrainEngine {
                     role = "jarvis",
                     visibleText = formatScientificNotation(toolPrefix + cleaned),
                     emotionTag = emotion,
-                    engineBadge = "CLOUD // $candidateId",
+                    engineBadge = "CLOUD // $candidateId$citationBadgeSuffix",
                     timestampIst = timeStamp
                 )
             }
         }
 
-        val offlineReply = buildOfflinePlanReply(plan, activeSlot.title, activeSlot.instruction, lecturesSummary, userQuery, matchedMemory)
+        val offlineReply = buildOfflinePlanReply(
+            plan = plan,
+            slotTitle = activeSlot.title,
+            slotInstruction = activeSlot.instruction,
+            lecturesSummary = lecturesSummary,
+            query = userQuery,
+            topCitation = topCitation,
+            wantsDetailed = wantsDetailed
+        )
         val (emotion, cleaned) = parseEmotionAndCleanText(offlineReply)
         return@withContext ChatMessageItem(
             id = System.currentTimeMillis(),
             role = "jarvis",
             visibleText = formatScientificNotation("$toolPrefix$cleaned"),
             emotionTag = emotion,
-            engineBadge = "AUTO-OFFLINE FALLBACK",
+            engineBadge = "AUTO-OFFLINE RAG$citationBadgeSuffix",
             timestampIst = timeStamp
         )
     }
@@ -849,30 +873,28 @@ object JarvisBrainEngine {
         slotInstruction: String,
         lecturesSummary: String,
         query: String,
-        matchedMemory: PermanentPdfMemory?
+        topCitation: RagCitationChunk?,
+        wantsDetailed: Boolean
     ): String {
         val q = query.lowercase()
-        if (matchedMemory != null && (q.contains("find") || q.contains("note") || q.contains("dpp") || q.contains("pdf"))) {
-            return "[focused] Found it in your permanent memory, sir: **${matchedMemory.fileName}** under ${matchedMemory.matchedChapter}."
+        if (q.contains("what now") || q.contains("slot") || q.contains("timetable") || q.contains("schedule")) {
+            return "[focused] Right now we are in **$slotTitle**, sir. $slotInstruction"
         }
-        return when {
-            q.contains("what now") || q.contains("slot") || q.contains("timetable") || q.contains("schedule") ->
-                "[focused] Right now we are in **$slotTitle**, sir. $slotInstruction"
-            q.contains("electric") || q.contains("charge") || q.contains("coulomb") || q.contains("gauss") ->
-                "[focused] Coulomb's law is F = k|q₁q₂|/r², and Gauss's law states total flux equals enclosed charge over ε₀, sir. Need the dipole derivation as well?"
-            q.contains("goc") || q.contains("inductive") || q.contains("hyperconjugation") || q.contains("resonance") ->
-                "[calm] For GOC stability, always check Aromaticity first, then Resonance, Hyperconjugation α-hydrogens, and finally Inductive effects, sir."
-            q.contains("biomolecule") || q.contains("enzyme") || q.contains("amino") || q.contains("carbohydrate") ->
-                "[encouraging] In Biomolecules, remember that competitive inhibitors raise apparent K_m without changing V_max, sir."
-            q.contains("oscillation") || q.contains("shm") || q.contains("pendulum") ->
-                "[focused] In SHM, total energy E = ½mω²A² stays constant while kinetic and potential energy oscillate at twice the frequency, sir."
-            q.contains("tired") || q.contains("sleep") || q.contains("stressed") || q.contains("backlog") ->
-                "[concerned] Take a 15-minute water break, sir. Never borrow from your 02:00 to 10:00 sleep window—let's just hit the Bad-Day Minimum."
-            else ->
-                "[calm] Right here with you, sir. We're in **$slotTitle**, on track for ${plan.meta.goalInstitution}."
+        if (q.contains("tired") || q.contains("sleep") || q.contains("stressed") || q.contains("backlog")) {
+            return "[concerned] Take a 15-minute water break, sir. Never borrow from your 02:00 to 10:00 sleep window—let's just hit the Bad-Day Minimum."
         }
+        // If Hybrid Local RAG found a verified citation in 0.Neet 2027 PDFs, Vault, or NCERT Core, use it directly!
+        if (topCitation != null) {
+            val snippetText = if (wantsDetailed) topCitation.snippet else topCitation.snippet.take(230)
+            return "[focused] According to **[${topCitation.sourceType}: ${topCitation.sourceTitle}]** (${topCitation.confidencePercent}% match), sir: $snippetText"
+        }
+        return "[calm] Right here with you, sir. We're in **$slotTitle**, on track for ${plan.meta.goalInstitution}. Today's queue: $lecturesSummary."
     }
 }
+
+// ============================================================================
+// 5. MAIN ACTIVITY & CHAPTER 9 SPATIAL ROOT COMPOSABLE
+// ============================================================================
 
 class MainActivity : ComponentActivity() {
     private var latestShareBanner by mutableStateOf<String?>(null)
@@ -884,7 +906,7 @@ class MainActivity : ComponentActivity() {
         latestShareBanner = JarvisVaultManager.handleSharedIncomingIntent(this, intent)
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
-                JarvisChapterEightApp(initialShareBanner = latestShareBanner)
+                JarvisChapterNineApp(initialShareBanner = latestShareBanner)
             }
         }
     }
@@ -899,7 +921,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun JarvisChapterEightApp(initialShareBanner: String? = null) {
+fun JarvisChapterNineApp(initialShareBanner: String? = null) {
     val context = LocalContext.current
     val plan = remember { NeetPlanRepository.loadPlan(context) }
     val masterPrompt = remember { NeetPlanRepository.loadMasterPrompt(context) }
@@ -926,9 +948,9 @@ fun JarvisChapterEightApp(initialShareBanner: String? = null) {
                     ChatMessageItem(
                         id = 1L,
                         role = "jarvis",
-                        visibleText = "At your service, sir. Chapter 8 British Butler TTS, 7-Emotion Prosody & NEET Lexicon are online. Double-clap on any tab to talk in Gemini Live.",
+                        visibleText = "At your service, sir. Chapter 9 Offline Brain, Snapdragon 870 RAM Guardrail & Hybrid Local RAG Citations are online. Double-clap on any tab to launch Gemini Live.",
                         emotionTag = "calm",
-                        engineBadge = "BUTLER VOICE READY",
+                        engineBadge = "HYBRID RAG READY",
                         timestampIst = "ONLINE"
                     )
                 )
@@ -1004,6 +1026,11 @@ fun JarvisChapterEightApp(initialShareBanner: String? = null) {
                     tilt = tilt
                 )
                 JarvisNavTab.BUTLER_TTS -> JarvisSpeakingScreen(
+                    lab = lab,
+                    tilt = tilt
+                )
+                JarvisNavTab.OFFLINE_RAG -> JarvisOfflineBrainAndRagScreen(
+                    plan = plan,
                     lab = lab,
                     tilt = tilt
                 )
@@ -1173,7 +1200,7 @@ fun JarvisChapterEightApp(initialShareBanner: String? = null) {
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "J.A.R.V.I.S. // CHAPTER 8 BRITISH BUTLER TTS & LEXICON ONLINE",
+                        text = "J.A.R.V.I.S. // CHAPTER 9 OFFLINE BRAIN & HYBRID RAG ONLINE",
                         color = palette.accentPrimary,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
@@ -1181,7 +1208,7 @@ fun JarvisChapterEightApp(initialShareBanner: String? = null) {
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Offline en-GB Neural Voices • 7-Emotion Prosody • Universal Double-Clap Gemini Live",
+                        text = "Snapdragon 870 RAM Guardrail • 0.Neet 2027 Citations • Universal Double-Clap Gemini Live",
                         color = palette.textSecondary,
                         fontSize = 13.sp
                     )
@@ -1316,9 +1343,9 @@ private fun JarvisGlassChatScreen(
                     Column {
                         Text(
                             text = if (privacyOff) {
-                                "OFFLINE MODE ACTIVE // 0 BYTES LEAVE TABLET"
+                                "OFFLINE RAG ACTIVE // ${LocalLlmModelManager.activeMountedModelName}"
                             } else {
-                                "HYBRID CLOUD BRAIN + AUTONOMOUS TOOLS // ${committedModelId.ifBlank { "gemini-3.8-flash" }}"
+                                "HYBRID CLOUD + LOCAL RAG // ${committedModelId.ifBlank { "gemini-3.8-flash" }}"
                             },
                             color = palette.textPrimary,
                             fontFamily = FontFamily.Monospace,
@@ -1327,9 +1354,9 @@ private fun JarvisGlassChatScreen(
                         )
                         Text(
                             text = if (privacyOff) {
-                                "Using local NEET 2027 Plan + 0.Neet 2027 Permanent PDF Memory only."
+                                "100% On-Device: Grounded in 0.Neet 2027 PDFs, AES-256 Vault & NCERT Core."
                             } else {
-                                "Double-clap anywhere to jump to Live Orb. Short conversational mode active."
+                                "Double-clap anywhere to jump to Live Orb. Hybrid RAG citations attached."
                             },
                             color = palette.textSecondary,
                             fontSize = 11.sp
@@ -1530,7 +1557,7 @@ private fun JarvisGlassChatScreen(
 
                 if (isStreaming) {
                     Text(
-                        text = "J.A.R.V.I.S. is thinking...",
+                        text = "J.A.R.V.I.S. is retrieving citations & thinking...",
                         color = JarvisSpatialPalettes.StatusWarning,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 12.sp
@@ -1635,7 +1662,7 @@ private fun BrainRouterAndScannerScreen(
             )
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                text = "Free RAM: $availRamMb MB / $totalRamMb MB (${if (availRamMb > 2200) "Ready for Offline Gemma 3 1B in Ch.9" else "Close background apps before loading Gemma"})",
+                text = "Free RAM: $availRamMb MB / $totalRamMb MB (${if (availRamMb > 1400) "Snapdragon 870 RAM Guardrail Passed ✓" else "Low RAM — Unload GGUF in Offline RAG tab"})",
                 color = palette.textPrimary,
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 15.sp
@@ -1985,7 +2012,7 @@ private fun TopSpatialHeader(
                     Box(modifier = Modifier.size(9.dp).clip(CircleShape).background(JarvisSpatialPalettes.StatusError))
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
-                        text = "J.A.R.V.I.S. // ${palette.name.uppercase()} • ${if (forceOffline) "OFFLINE" else committedModelId.ifBlank { "GEMINI 3.8 READY" }}",
+                        text = "J.A.R.V.I.S. // ${palette.name.uppercase()} • ${if (forceOffline) "OFFLINE RAG" else committedModelId.ifBlank { "GEMINI 3.8 + RAG" }}",
                         color = JarvisSpatialPalettes.StatusWarning,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
@@ -2000,7 +2027,7 @@ private fun TopSpatialHeader(
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "Mic: ${"%.1f".format(SharedMicAndWakeManager.liveMicDb)} dBFS • Claps: ${SharedMicAndWakeManager.totalClapTriggers} • Barge-Ins: ${SharedMicAndWakeManager.totalBargeInTriggers} • Butler TTS Ready",
+                    text = "Mic: ${"%.1f".format(SharedMicAndWakeManager.liveMicDb)} dBFS • Claps: ${SharedMicAndWakeManager.totalClapTriggers} • Barge-Ins: ${SharedMicAndWakeManager.totalBargeInTriggers} • Hybrid RAG Active",
                     color = palette.textSecondary,
                     fontSize = 11.sp
                 )
@@ -2655,13 +2682,13 @@ private fun EncryptedApiKeyVaultScreen(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Privacy Kill-Switch (Force 100% On-Device Offline Mode)",
+                        text = "Privacy Kill-Switch (Force 100% On-Device Offline RAG Mode)",
                         color = palette.textPrimary,
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp
                     )
                     Text(
-                        text = "Free-tier cloud prompts may be reviewed by Google. Toggle ON anytime to block all cloud audio/text/image calls.",
+                        text = "Free-tier cloud prompts may be reviewed by Google. Toggle ON anytime to block all cloud calls and use your Offline RAG Brain.",
                         color = palette.textSecondary,
                         fontSize = 12.sp
                     )
@@ -2780,6 +2807,10 @@ private fun KeyEntryCard(
         )
     }
 }
+
+// ============================================================================
+// 6. GYROSCOPE TILT, LIVING AURORA & 3D LIQUID GLASS COMPONENTS
+// ============================================================================
 
 @Composable
 fun rememberGyroscopeTilt(strength: Float): Offset {
