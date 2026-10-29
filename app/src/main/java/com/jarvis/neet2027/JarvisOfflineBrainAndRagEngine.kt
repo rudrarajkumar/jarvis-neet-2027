@@ -68,10 +68,6 @@ import java.net.URL
 import kotlin.math.ln
 import kotlin.math.max
 
-// ============================================================================
-// 1. ON-DEVICE GGUF / LITERT MODEL MANAGER & SNAPDRAGON 870 RAM GUARDRAIL
-// ============================================================================
-
 enum class LocalModelRamState(val label: String) {
     UNLOADED("UNLOADED (0 MB RAM Used)"),
     LOADING("VERIFYING GGUF HEADER & MAPPING..."),
@@ -332,8 +328,6 @@ object JarvisHybridRagEngine {
         val verifiedFact: String
     )
 
-    // Expanded conversational & generic stop-words so "how r u" or "is offline mode working"
-    // NEVER triggers a fake PDF match!
     private val conversationalStopWords = setOf(
         "what", "when", "where", "which", "who", "whom", "whose", "why", "how",
         "are", "you", "your", "yours", "can", "could", "would", "should", "shall",
@@ -403,7 +397,7 @@ object JarvisHybridRagEngine {
         NcertCoreEntry(
             subject = "Physical Chemistry",
             chapter = "Electrochemistry, Kinetics & Equilibrium",
-            keywords = listOf("nernst", "faraday", "kinetics", "arrhenius", "half-life", "henderson", "buffer", "ksp", "gibbs"),
+            keywords = listOf("nernst", "faraday", "kinetics", "arrhenius", "half-life", "henderson", "buffer", "ph", "ksp", "gibbs"),
             verifiedFact = "Nernst Equation at 298 K: E_cell = E°_cell - (0.0591/n) log Q, and ΔG° = -nFE°_cell. First-order kinetics: k = (2.303/t) log([A]₀/[A]), t_1/2 = 0.693/k (independent of initial concentration). Acidic buffer pH = pK_a + log([Salt]/[Acid])."
         ),
         NcertCoreEntry(
@@ -414,10 +408,6 @@ object JarvisHybridRagEngine {
         )
     )
 
-    /**
-     * Strips raw file-path headers ("PERMANENT PDF MEMORY // Path: ...") so snippets
-     * read cleanly like a real tutor instead of dumping file paths.
-     */
     private fun cleanPdfMemorySnippet(raw: String): String {
         val lines = raw.lines()
             .map { it.trim() }
@@ -432,11 +422,9 @@ object JarvisHybridRagEngine {
     }
 
     fun retrieveTopCitations(context: Context, query: String, topK: Int = 3): List<RagCitationChunk> {
-        // Strip any system instruction suffix added by Live Orb
         val userPartOnly = query.substringBefore("(Reply in 1 to 2").trim()
         val cleanQ = userPartOnly.lowercase().replace(Regex("[^a-z0-9\\s]"), " ")
 
-        // Only keep meaningful scientific/subject tokens (length >= 4, or known 3-letter NEET acronyms)
         val allowedShortAcronyms = setOf("goc", "shm", "dpp", "pcr", "dna", "rna", "atp", "lh", "fsh", "sn1", "sn2", "emf", "ksp")
         val queryTokens = cleanQ.split(Regex("\\s+"))
             .filter { tok ->
@@ -448,7 +436,6 @@ object JarvisHybridRagEngine {
 
         val candidates = mutableListOf<RagCitationChunk>()
 
-        // 1. Search Embedded NCERT Class 11 & 12 Knowledge Graph (Whole-word / prefix match)
         ncertKnowledgeGraph.forEach { entry ->
             var score = 0f
             queryTokens.forEach { tok ->
@@ -473,7 +460,6 @@ object JarvisHybridRagEngine {
             }
         }
 
-        // 2. Search AES-256 Encrypted Vault & Mistake Notebook
         val vaultNotes = JarvisVaultManager.loadVaultNotes(context)
         vaultNotes.forEach { note ->
             val combined = "${note.title} ${note.folder} ${note.tags.joinToString(" ")} ${note.markdownBody}"
@@ -498,7 +484,6 @@ object JarvisHybridRagEngine {
             }
         }
 
-        // 3. Search Permanent PDF Memories from `/storage/emulated/0/0.Neet 2027` using WHOLE-WORD boundaries
         val neetRoot = StudyLibraryManager.getDedicatedRootFolder(context)
         StudyLibraryManager.ensurePermanentMemoriesLoaded(context, neetRoot)
         val pdfMemories = StudyLibraryManager.getAllPermanentMemories()
@@ -549,11 +534,6 @@ object JarvisHybridRagEngine {
         return Pair(block, citations)
     }
 
-    /**
-     * Complete 100% On-Device Offline Conversational + RAG Responder:
-     * Handles greetings, "how r u", "are you mounted", "is offline mode working",
-     * timetable queries, and NEET Physics/Chemistry/Biology questions naturally!
-     */
     fun generateOfflineConversationalOrRagReply(
         context: Context,
         plan: NeetPlanRoot,
@@ -574,9 +554,8 @@ object JarvisHybridRagEngine {
         }
         val pdfCount = StudyLibraryManager.getAllPermanentMemories().size
 
-        // 1. Conversational Greetings & Status Checks ("how r u", "are you mountain/mounted", "is offline mode working")
         if (q.contains("how r u") || q.contains("how are you") || q.contains("how do you feel")) {
-            return "[calm] Doing splendidly, sir! I am running 100% offline on your Xiaomi Pad 6 $mountedInfo and $pdfCount indexed PDFs ready. What shall we tackle first?"
+            return "[calm] Doing splendidly, sir! I am running offline on your Xiaomi Pad 6 $mountedInfo and $pdfCount indexed PDFs ready. What shall we tackle first?"
         }
         if (q.contains("mountain") || q.contains("mounted") || q.contains("gemma") || q.contains("qwen") || q.contains("gguf") || q.contains("ram")) {
             val (availMb, totalMb) = XiaomiSurvivalHelper.getAvailableRamMb(context)
@@ -591,8 +570,6 @@ object JarvisHybridRagEngine {
         if (q.contains("who are you") || q.contains("what can you do")) {
             return "[calm] I am J.A.R.V.I.S., your offline-capable NEET UG 2027 companion for ${plan.meta.goalInstitution}, sir. Even with Wi-Fi off, I can search your $pdfCount PDFs, set hardware alarms, log mistakes to your Vault, and answer NCERT concepts."
         }
-
-        // 2. Timetable / Schedule / Study Coaching Queries
         if (q.contains("what now") || q.contains("slot") || q.contains("timetable") || q.contains("schedule") || q.contains("study now") || q.contains("today")) {
             return "[focused] Right now in Imphal we are in **$slotTitle**, sir. $slotInstruction Today's four tracks are: $lecturesSummary."
         }
@@ -600,14 +577,12 @@ object JarvisHybridRagEngine {
             return "[concerned] Take a 15-minute water break, sir. Never borrow from your 02:00 to 10:00 IST sleep guardrail—let us just complete the Bad-Day Minimum today."
         }
 
-        // 3. Verified Scientific / NEET RAG Citation Match
         if (topCitation != null) {
             val cleanSnippet = if (wantsDetailed) topCitation.snippet else topCitation.snippet.take(220)
             return "[focused] From **[${topCitation.sourceType}: ${topCitation.sourceTitle}]** (${topCitation.confidencePercent}% match), sir: $cleanSnippet"
         }
 
-        // 4. Clean Conversational Fallback (Never dumps random PDF paths!)
-        return "[calm] I heard *\"$userPart\"*, sir. I am running 100% offline ($mountedInfo) during **$slotTitle**. Ask me about any NEET topic (like Gauss's law, GOC priority, SN1/SN2, Nernst equation, or Biomolecules) or say *'set alarm for 10:30'*!"
+        return "[calm] I heard *\"$userPart\"*, sir. I am running offline ($mountedInfo) during **$slotTitle**. Ask me about any NEET topic (like Gauss's law, GOC priority, SN1/SN2, Nernst equation, or Biomolecules) or say *'set alarm for 10:30'*!"
     }
 }
 
@@ -648,7 +623,6 @@ fun JarvisOfflineBrainAndRagScreen(
     val vaultCount = remember { JarvisVaultManager.loadVaultNotes(context).size }
 
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        // 1. Snapdragon 870 RAM Guardrail & Active Local Engine Telemetry
         LiquidGlassCard(lab = lab, tilt = tilt, accentTint = JarvisSpatialPalettes.StatusSuccess) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -728,7 +702,6 @@ fun JarvisOfflineBrainAndRagScreen(
             }
         }
 
-        // 2. Resumable GGUF Model Cards (Stored inside /storage/emulated/0/0.Neet 2027/AI_MODELS)
         LiquidGlassCard(lab = lab, tilt = tilt, accentTint = JarvisSpatialPalettes.StatusWarning) {
             Text(
                 text = "ON-DEVICE GGUF MODELS IN /storage/emulated/0/0.Neet 2027/AI_MODELS",
@@ -847,7 +820,6 @@ fun JarvisOfflineBrainAndRagScreen(
             }
         }
 
-        // 3. Local Hybrid RAG & Zero-Hallucination Citation Search Console
         LiquidGlassCard(lab = lab, tilt = tilt) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
