@@ -554,7 +554,7 @@ object EncryptedKeyStoreVault {
 }
 
 // ============================================================================
-// 4. HYBRID CLOUD + OFFLINE RAG BRAIN ENGINE
+// 4. HYBRID CLOUD + OFFLINE RAG BRAIN ENGINE (WITH 0ms WI-FI OFF SWITCHING)
 // ============================================================================
 
 data class DiscoveredModelInfo(
@@ -716,7 +716,7 @@ object JarvisBrainEngine {
         val toolOutcome = JarvisAutonomousToolRouter.evaluateAndRunAutonomousTools(context, plan, userQuery)
         val toolPrefix = if (toolOutcome.toolSummaryBanner.isNotBlank()) "${toolOutcome.toolSummaryBanner}\n\n" else ""
 
-        // 2. Chapter 9 Hybrid Local RAG Retrieval (0.Neet 2027 PDFs + Vault Notes + NCERT Core Graph)
+        // 2. Chapter 9 Hybrid Local RAG Retrieval (Whole-word scientific boost, filters out casual greetings)
         val (ragContextBlock, ragCitations) = JarvisHybridRagEngine.buildRagContextBlockForPrompt(context, userQuery)
         val topCitation = ragCitations.firstOrNull()
         val citationBadgeSuffix = if (topCitation != null) {
@@ -727,26 +727,36 @@ object JarvisBrainEngine {
         val wantsDetailed = lowerQ.contains("detail") || lowerQ.contains("elaborate") ||
             lowerQ.contains("in depth") || lowerQ.contains("step by step") || lowerQ.contains("derive")
 
+        // 3. Instant 0ms Hardware Wi-Fi / Network Check (Never hangs on Cloud timeouts when Wi-Fi is OFF!)
+        val isOnlineRightNow = LocalLlmModelManager.isDeviceOnlineRightNow(context)
+        JarvisSttRouter.isNetworkReachable = isOnlineRightNow
+
         val apiKey = EncryptedKeyStoreVault.readSecret(context, EncryptedKeyStoreVault.KEY_GEMINI_API)
         val privacyLock = EncryptedKeyStoreVault.isOfflinePrivacyLockEnabled(context)
 
-        if (forceOffline || privacyLock || apiKey.isBlank()) {
-            val offlineText = buildOfflinePlanReply(
+        if (forceOffline || privacyLock || apiKey.isBlank() || !isOnlineRightNow) {
+            val offlineText = JarvisHybridRagEngine.generateOfflineConversationalOrRagReply(
+                context = context,
                 plan = plan,
                 slotTitle = activeSlot.title,
                 slotInstruction = activeSlot.instruction,
                 lecturesSummary = lecturesSummary,
-                query = userQuery,
+                rawUserQuery = userQuery,
                 topCitation = topCitation,
                 wantsDetailed = wantsDetailed
             )
             val (emotion, cleaned) = parseEmotionAndCleanText(offlineText)
+            val offlineBadge = if (topCitation != null) {
+                "OFFLINE RAG$citationBadgeSuffix"
+            } else {
+                "OFFLINE BRAIN // ${LocalLlmModelManager.activeMountedModelName.take(24)}"
+            }
             return@withContext ChatMessageItem(
                 id = System.currentTimeMillis(),
                 role = "jarvis",
                 visibleText = formatScientificNotation(toolPrefix + cleaned),
                 emotionTag = emotion,
-                engineBadge = "OFFLINE RAG ($citationBadgeSuffix)",
+                engineBadge = offlineBadge,
                 timestampIst = timeStamp
             )
         }
@@ -812,8 +822,8 @@ object JarvisBrainEngine {
                     requestMethod = "POST"
                     setRequestProperty("Content-Type", "application/json; charset=utf-8")
                     doOutput = true
-                    connectTimeout = 15000
-                    readTimeout = 20000
+                    connectTimeout = 8000
+                    readTimeout = 12000
                 }
                 conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
 
@@ -847,12 +857,13 @@ object JarvisBrainEngine {
             }
         }
 
-        val offlineReply = buildOfflinePlanReply(
+        val offlineReply = JarvisHybridRagEngine.generateOfflineConversationalOrRagReply(
+            context = context,
             plan = plan,
             slotTitle = activeSlot.title,
             slotInstruction = activeSlot.instruction,
             lecturesSummary = lecturesSummary,
-            query = userQuery,
+            rawUserQuery = userQuery,
             topCitation = topCitation,
             wantsDetailed = wantsDetailed
         )
@@ -865,30 +876,6 @@ object JarvisBrainEngine {
             engineBadge = "AUTO-OFFLINE RAG$citationBadgeSuffix",
             timestampIst = timeStamp
         )
-    }
-
-    private fun buildOfflinePlanReply(
-        plan: NeetPlanRoot,
-        slotTitle: String,
-        slotInstruction: String,
-        lecturesSummary: String,
-        query: String,
-        topCitation: RagCitationChunk?,
-        wantsDetailed: Boolean
-    ): String {
-        val q = query.lowercase()
-        if (q.contains("what now") || q.contains("slot") || q.contains("timetable") || q.contains("schedule")) {
-            return "[focused] Right now we are in **$slotTitle**, sir. $slotInstruction"
-        }
-        if (q.contains("tired") || q.contains("sleep") || q.contains("stressed") || q.contains("backlog")) {
-            return "[concerned] Take a 15-minute water break, sir. Never borrow from your 02:00 to 10:00 sleep window—let's just hit the Bad-Day Minimum."
-        }
-        // If Hybrid Local RAG found a verified citation in 0.Neet 2027 PDFs, Vault, or NCERT Core, use it directly!
-        if (topCitation != null) {
-            val snippetText = if (wantsDetailed) topCitation.snippet else topCitation.snippet.take(230)
-            return "[focused] According to **[${topCitation.sourceType}: ${topCitation.sourceTitle}]** (${topCitation.confidencePercent}% match), sir: $snippetText"
-        }
-        return "[calm] Right here with you, sir. We're in **$slotTitle**, on track for ${plan.meta.goalInstitution}. Today's queue: $lecturesSummary."
     }
 }
 
@@ -961,6 +948,8 @@ fun JarvisChapterNineApp(initialShareBanner: String? = null) {
     }
 
     LaunchedEffect(Unit) {
+        // Auto-mount downloaded GGUF (e.g., gemma-3-1b-it-q4_k_m.gguf) if present in 0.Neet 2027/AI_MODELS
+        LocalLlmModelManager.autoMountExistingModelIfReady(context)
         val hasMic = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         if (hasMic && SharedMicAndWakeManager.userWantsStreamArmed) {
             SharedMicAndWakeManager.startSharedMicStream(context)
@@ -1208,7 +1197,7 @@ fun JarvisChapterNineApp(initialShareBanner: String? = null) {
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Snapdragon 870 RAM Guardrail • 0.Neet 2027 Citations • Universal Double-Clap Gemini Live",
+                        text = "0ms Wi-Fi Off Auto-Switch • Gemma 3 1B + 1,363 PDFs • Universal Double-Clap Gemini Live",
                         color = palette.textSecondary,
                         fontSize = 13.sp
                     )
@@ -1315,13 +1304,14 @@ private fun JarvisGlassChatScreen(
     var userDraft by remember { mutableStateOf("") }
     var searchFilter by remember { mutableStateOf("") }
     var isStreaming by remember { mutableStateOf(false) }
-    val privacyOff = EncryptedKeyStoreVault.isOfflinePrivacyLockEnabled(context) || forceOffline
+    val isWifiOnline = LocalLlmModelManager.isDeviceOnlineRightNow(context)
+    val privacyOff = EncryptedKeyStoreVault.isOfflinePrivacyLockEnabled(context) || forceOffline || !isWifiOnline
 
     val suggestionChips = listOf(
+        "how r u",
+        "is the offline mode working",
+        "are you mounted in RAM",
         "set alarm for 10:30",
-        "Jarvis, find my Biomolecules DPP PDF memory",
-        "log mistake: Forgot axial dipole 2kp/r3 factor",
-        "What should I do right now, Jarvis?",
         "GOC: Priority order of electronic effects",
         "Explain Coulomb's law in detail"
     )
@@ -1343,7 +1333,7 @@ private fun JarvisGlassChatScreen(
                     Column {
                         Text(
                             text = if (privacyOff) {
-                                "OFFLINE RAG ACTIVE // ${LocalLlmModelManager.activeMountedModelName}"
+                                "OFFLINE BRAIN ACTIVE (0ms SWITCH) // ${LocalLlmModelManager.activeMountedModelName}"
                             } else {
                                 "HYBRID CLOUD + LOCAL RAG // ${committedModelId.ifBlank { "gemini-3.8-flash" }}"
                             },
@@ -1354,9 +1344,9 @@ private fun JarvisGlassChatScreen(
                         )
                         Text(
                             text = if (privacyOff) {
-                                "100% On-Device: Grounded in 0.Neet 2027 PDFs, AES-256 Vault & NCERT Core."
+                                "Wi-Fi is OFF or Locked: Answering 100% locally via Gemma 3 1B + 1,363 PDFs + NCERT Core."
                             } else {
-                                "Double-clap anywhere to jump to Live Orb. Hybrid RAG citations attached."
+                                "Wi-Fi Online: Double-clap anywhere to jump to Live Orb. Hybrid RAG citations attached."
                             },
                             color = palette.textSecondary,
                             fontSize = 11.sp
@@ -1365,7 +1355,7 @@ private fun JarvisGlassChatScreen(
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     LiquidGlassButton(
-                        text = if (privacyOff) "Offline Locked" else "Cloud Active",
+                        text = if (privacyOff) "Offline Active" else "Cloud Active",
                         icon = if (privacyOff) Icons.Default.CloudOff else Icons.Default.CloudDone,
                         lab = lab,
                         isActive = !privacyOff,
@@ -1569,7 +1559,7 @@ private fun JarvisGlassChatScreen(
         LiquidGlassPillInput(
             value = userDraft,
             onValueChange = { userDraft = it },
-            placeholder = "Ask Jarvis or run a tool ('set alarm for 10:30', 'log mistake: ...', 'explain in detail...')...",
+            placeholder = "Ask Jarvis offline or online ('how r u', 'is offline mode working', 'explain Gauss law')...",
             lab = lab,
             leadingIcon = Icons.Default.Mic,
             trailingContent = {
@@ -1989,9 +1979,11 @@ private fun TopSpatialHeader(
     tick: Int,
     tilt: Offset
 ) {
+    val context = LocalContext.current
     val palette = lab.currentPalette
     val imphalNow = remember(tick) { NeetPlanRepository.getImphalNow() }
     val daysToNeet = remember(tick) { NeetPlanRepository.getDaysUntilExam(plan, imphalNow.toLocalDate()) }
+    val isOnlineNow = remember(tick) { LocalLlmModelManager.isDeviceOnlineRightNow(context) }
 
     LiquidGlassCard(lab = lab, tilt = tilt, contentPadding = 14.dp) {
         Row(
@@ -2012,8 +2004,8 @@ private fun TopSpatialHeader(
                     Box(modifier = Modifier.size(9.dp).clip(CircleShape).background(JarvisSpatialPalettes.StatusError))
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
-                        text = "J.A.R.V.I.S. // ${palette.name.uppercase()} • ${if (forceOffline) "OFFLINE RAG" else committedModelId.ifBlank { "GEMINI 3.8 + RAG" }}",
-                        color = JarvisSpatialPalettes.StatusWarning,
+                        text = "J.A.R.V.I.S. // ${if (!isOnlineNow || forceOffline) "OFFLINE BRAIN (${LocalLlmModelManager.activeMountedModelName.take(22)})" else committedModelId.ifBlank { "GEMINI 3.8 + RAG" }}",
+                        color = if (!isOnlineNow || forceOffline) JarvisSpatialPalettes.StatusSuccess else JarvisSpatialPalettes.StatusWarning,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
                         fontSize = 11.sp
@@ -2027,7 +2019,7 @@ private fun TopSpatialHeader(
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "Mic: ${"%.1f".format(SharedMicAndWakeManager.liveMicDb)} dBFS • Claps: ${SharedMicAndWakeManager.totalClapTriggers} • Barge-Ins: ${SharedMicAndWakeManager.totalBargeInTriggers} • Hybrid RAG Active",
+                    text = "Mic: ${"%.1f".format(SharedMicAndWakeManager.liveMicDb)} dBFS • Claps: ${SharedMicAndWakeManager.totalClapTriggers} • Barge-Ins: ${SharedMicAndWakeManager.totalBargeInTriggers} • ${if (isOnlineNow) "Wi-Fi Online" else "Wi-Fi OFF (0ms Offline Mode)"}",
                     color = palette.textSecondary,
                     fontSize = 11.sp
                 )
