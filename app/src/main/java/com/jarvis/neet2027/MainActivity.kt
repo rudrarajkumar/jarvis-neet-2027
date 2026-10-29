@@ -94,6 +94,7 @@ import androidx.compose.material.icons.filled.SettingsSuggest
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -399,6 +400,7 @@ enum class VoiceOrbState {
 private enum class JarvisNavTab(val label: String, val icon: ImageVector) {
     LIVE_ORB("Live Orb", Icons.Default.GraphicEq),
     VOICE_MIC("Voice & Mic", Icons.Default.Mic),
+    BUTLER_TTS("Butler TTS", Icons.Default.VolumeUp),
     STUDY_LIBRARY("0.Neet 2027", Icons.Default.Folder),
     VAULT_TOOLS("Vault", Icons.Default.Lock),
     NEET_COMMAND("NEET Hub", Icons.Default.Schedule),
@@ -759,7 +761,6 @@ object JarvisBrainEngine {
             $memoryContextBlock
         """.trimIndent()
 
-        var lastError: Throwable? = null
         for (candidateId in candidateChain) {
             val attempt = runCatching {
                 val endpoint = URL("https://generativelanguage.googleapis.com/v1beta/models/$candidateId:generateContent?key=$apiKey")
@@ -827,8 +828,6 @@ object JarvisBrainEngine {
                     engineBadge = "CLOUD // $candidateId",
                     timestampIst = timeStamp
                 )
-            } else {
-                lastError = attempt.exceptionOrNull()
             }
         }
 
@@ -885,7 +884,7 @@ class MainActivity : ComponentActivity() {
         latestShareBanner = JarvisVaultManager.handleSharedIncomingIntent(this, intent)
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
-                JarvisChapterSevenApp(initialShareBanner = latestShareBanner)
+                JarvisChapterEightApp(initialShareBanner = latestShareBanner)
             }
         }
     }
@@ -900,7 +899,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun JarvisChapterSevenApp(initialShareBanner: String? = null) {
+fun JarvisChapterEightApp(initialShareBanner: String? = null) {
     val context = LocalContext.current
     val plan = remember { NeetPlanRepository.loadPlan(context) }
     val masterPrompt = remember { NeetPlanRepository.loadMasterPrompt(context) }
@@ -927,9 +926,9 @@ fun JarvisChapterSevenApp(initialShareBanner: String? = null) {
                     ChatMessageItem(
                         id = 1L,
                         role = "jarvis",
-                        visibleText = "At your service, sir. Double-clap from any tab to jump straight into Gemini Live on the 3D Hologram Orb.",
+                        visibleText = "At your service, sir. Chapter 8 British Butler TTS, 7-Emotion Prosody & NEET Lexicon are online. Double-clap on any tab to talk in Gemini Live.",
                         emotionTag = "calm",
-                        engineBadge = "GEMINI LIVE READY",
+                        engineBadge = "BUTLER VOICE READY",
                         timestampIst = "ONLINE"
                     )
                 )
@@ -939,7 +938,6 @@ fun JarvisChapterSevenApp(initialShareBanner: String? = null) {
         }
     }
 
-    // 1. Auto-start the 16kHz Double-Clap Guardian on launch if mic permission is already granted
     LaunchedEffect(Unit) {
         val hasMic = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         if (hasMic && SharedMicAndWakeManager.userWantsStreamArmed) {
@@ -949,9 +947,7 @@ fun JarvisChapterSevenApp(initialShareBanner: String? = null) {
         showBootOverlay = false
     }
 
-    // 2. UNIVERSAL DOUBLE-CLAP TAB SWITCHER:
-    // Whenever a Double-Clap occurs on ANY tab (Calendar, 0.Neet 2027, Vault, Voice & Mic, etc.),
-    // immediately switch to LIVE_ORB so JarvisLiveParticleOrbPage handles the live conversation!
+    // UNIVERSAL DOUBLE-CLAP TAB SWITCHER -> Jumps straight to LIVE_ORB from any tab!
     val currentWakeTick = SharedMicAndWakeManager.liveOrbWakeEventTick
     LaunchedEffect(currentWakeTick) {
         if (currentWakeTick > 0 && selectedTab != JarvisNavTab.LIVE_ORB) {
@@ -970,7 +966,6 @@ fun JarvisChapterSevenApp(initialShareBanner: String? = null) {
 
     fun handleManualTabSelect(newTab: JarvisNavTab) {
         if (newTab != JarvisNavTab.LIVE_ORB) {
-            // Reset wake tick and ensure Double-Clap Guardian is armed when user switches to other tabs
             SharedMicAndWakeManager.liveOrbWakeEventTick = 0
             SharedMicAndWakeManager.endGeminiLiveAndRearmClapGuard(context)
         }
@@ -1006,6 +1001,10 @@ fun JarvisChapterSevenApp(initialShareBanner: String? = null) {
                     committedModelId = committedModelId,
                     committedTemperature = committedTemperature,
                     forceOffline = forceOfflineRouter,
+                    tilt = tilt
+                )
+                JarvisNavTab.BUTLER_TTS -> JarvisSpeakingScreen(
+                    lab = lab,
                     tilt = tilt
                 )
                 JarvisNavTab.STUDY_LIBRARY -> StudyLibraryScreen(
@@ -1174,7 +1173,7 @@ fun JarvisChapterSevenApp(initialShareBanner: String? = null) {
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "J.A.R.V.I.S. // UNIVERSAL DOUBLE-CLAP GEMINI LIVE ORB",
+                        text = "J.A.R.V.I.S. // CHAPTER 8 BRITISH BUTLER TTS & LEXICON ONLINE",
                         color = palette.accentPrimary,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
@@ -1182,7 +1181,7 @@ fun JarvisChapterSevenApp(initialShareBanner: String? = null) {
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Double-Clap on Any Tab -> Opens Live Orb • Real-Time Voice Barge-In Active",
+                        text = "Offline en-GB Neural Voices • 7-Emotion Prosody • Universal Double-Clap Gemini Live",
                         color = palette.textSecondary,
                         fontSize = 13.sp
                     )
@@ -1297,7 +1296,7 @@ private fun JarvisGlassChatScreen(
         "log mistake: Forgot axial dipole 2kp/r3 factor",
         "What should I do right now, Jarvis?",
         "GOC: Priority order of electronic effects",
-        "I feel tired / behind schedule—re-plan gently"
+        "Explain Coulomb's law in detail"
     )
 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -2001,7 +2000,7 @@ private fun TopSpatialHeader(
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "Mic: ${"%.1f".format(SharedMicAndWakeManager.liveMicDb)} dBFS • Claps: ${SharedMicAndWakeManager.totalClapTriggers} • Barge-Ins: ${SharedMicAndWakeManager.totalBargeInTriggers} • Split-Screen Adaptive",
+                    text = "Mic: ${"%.1f".format(SharedMicAndWakeManager.liveMicDb)} dBFS • Claps: ${SharedMicAndWakeManager.totalClapTriggers} • Barge-Ins: ${SharedMicAndWakeManager.totalBargeInTriggers} • Butler TTS Ready",
                     color = palette.textSecondary,
                     fontSize = 11.sp
                 )
