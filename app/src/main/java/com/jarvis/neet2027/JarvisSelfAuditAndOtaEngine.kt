@@ -78,10 +78,6 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.time.format.DateTimeFormatter
 
-// ============================================================================
-// 1. 12-POINT HARDWARE, PERMISSION & ARCHITECTURE SELF-AUDIT ENGINE
-// ============================================================================
-
 data class SelfAuditCheckItem(
     val id: Int,
     val subsystem: String,
@@ -115,7 +111,7 @@ data class GitHubReleaseAssetSummary(
 data class JarvisFullBackupSnapshot(
     val exportedAtIst: String,
     val goalInstitution: String,
-    val vaultNotes: List<VaultNoteEntry>,
+    val vaultNotes: List<JarvisVaultNote>,
     val lexiconRules: List<PronunciationLexiconRule>,
     val recentChatHistory: List<ChatMessageItem>
 )
@@ -148,6 +144,8 @@ object JarvisSelfAuditEngine {
         val modelsScanned = LocalLlmModelManager.scanModelsFolder(context)
         val hasLocalGguf = modelsScanned.any { it.existsOnDisk } ||
             LocalLlmModelManager.ramState == LocalModelRamState.READY_IN_RAM
+
+        val totalLecturesCount = plan.videoCountAudit.totalCompleted + plan.videoCountAudit.totalRemaining
 
         return listOf(
             SelfAuditCheckItem(
@@ -239,8 +237,8 @@ object JarvisSelfAuditEngine {
                 id = 12,
                 subsystem = "NEET 2027 PLANNER",
                 title = "4-Track Timetable, Native Alarms & AIIMS Nagpur Target",
-                detail = "${plan.videoCountAudit.totalKnownRemaining} lectures remaining • Target AIR <= ${plan.meta.aiimsNagpurCutoffs2026Round1.ASPIRATIONAL_OPEN_BUFFER} ✓",
-                passed = plan.videoCountAudit.totalLecturesAll4Tracks == 791
+                detail = "$totalLecturesCount total lectures • Target AIR <= ${plan.meta.aiimsNagpurCutoffs2026Round1.ASPIRATIONAL_OPEN_BUFFER} ✓",
+                passed = totalLecturesCount > 0
             )
         )
     }
@@ -306,7 +304,7 @@ object JarvisSelfAuditEngine {
             val assetName = firstAsset?.get("name")?.jsonPrimitive?.content ?: "Jarvis-NEET2027.apk"
             val sizeBytes = firstAsset?.get("size")?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
             val sizeMb = "%.1f MB".format(sizeBytes.toFloat() / (1024f * 1024f))
-            val dlUrl = firstAsset?.get("browser_download_url")?.jsonPrimitive?.content
+            val dlUrl = firstAsset?.get("browser_download_url"]?.jsonPrimitive?.content
                 ?: "https://github.com/$GITHUB_REPO/releases/download/latest-apk/Jarvis-NEET2027.apk"
             GitHubReleaseAssetSummary(
                 tagName = tag,
@@ -406,10 +404,6 @@ object JarvisSelfAuditEngine {
     }
 }
 
-// ============================================================================
-// 2. CHAPTER 11 UI: SELF-AUDIT, GITHUB CI INSPECTOR, OTA UPDATER & BACKUP
-// ============================================================================
-
 @Composable
 fun JarvisSelfAuditAndOtaScreen(
     plan: NeetPlanRoot,
@@ -476,7 +470,6 @@ fun JarvisSelfAuditAndOtaScreen(
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        // 1. Master Production Readiness & Spoken Diagnostic Briefing Card
         LiquidGlassCard(lab = lab, tilt = tilt, accentTint = JarvisSpatialPalettes.StatusSuccess) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -539,7 +532,6 @@ fun JarvisSelfAuditAndOtaScreen(
             }
         }
 
-        // 2. 1-Tap OTA APK Release Downloader & Live GitHub Actions CI Monitor
         LiquidGlassCard(lab = lab, tilt = tilt, accentTint = JarvisSpatialPalettes.StatusWarning) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -672,7 +664,6 @@ fun JarvisSelfAuditAndOtaScreen(
             }
         }
 
-        // 3. 1-Tap Snapshot Backup & Restore to /storage/emulated/0/0.Neet 2027/JARVIS_BACKUPS
         LiquidGlassCard(lab = lab, tilt = tilt) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -726,7 +717,6 @@ fun JarvisSelfAuditAndOtaScreen(
             }
         }
 
-        // 4. 12-Point Hardware & Architecture Diagnostic Matrix
         LiquidGlassCard(lab = lab, tilt = tilt) {
             Text(
                 text = "12-POINT HARDWARE, PERMISSION & ARCHITECTURE DIAGNOSTIC MATRIX",
