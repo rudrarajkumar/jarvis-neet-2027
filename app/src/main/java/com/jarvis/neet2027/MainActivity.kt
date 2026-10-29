@@ -1,9 +1,11 @@
 package com.jarvis.neet2027
 
+import android.Manifest
 import android.app.ActivityManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -135,6 +137,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.jarvis.neet2027.model.NeetPlanRepository
 import com.jarvis.neet2027.model.NeetPlanRoot
 import kotlinx.coroutines.Dispatchers
@@ -697,7 +700,7 @@ object JarvisBrainEngine {
         StudyLibraryManager.ensurePermanentMemoriesLoaded(context, rootFolder)
         val allMemories = StudyLibraryManager.getAllPermanentMemories()
         val keywords = userQuery.lowercase().split(" ").filter {
-            it.length >= 4 && it !in listOf("jarvis", "find", "notes", "open", "explain", "what", "from")
+            it.length >= 4 && it !in listOf("jarvis", "find", "notes", "open", "explain", "what", "from", "reply", "natural", "sentences")
         }
         val matchedMemory = allMemories.firstOrNull { mem ->
             keywords.any { kw ->
@@ -709,6 +712,10 @@ object JarvisBrainEngine {
         val memoryContextBlock = if (matchedMemory != null) {
             "\nPERMANENT PDF MEMORY FROM 0.Neet 2027 (${matchedMemory.relativePath}):\n${matchedMemory.extractedMemoryText.take(1400)}"
         } else ""
+
+        val lowerQ = userQuery.lowercase()
+        val wantsDetailed = lowerQ.contains("detail") || lowerQ.contains("elaborate") ||
+            lowerQ.contains("in depth") || lowerQ.contains("step by step") || lowerQ.contains("derive")
 
         val apiKey = EncryptedKeyStoreVault.readSecret(context, EncryptedKeyStoreVault.KEY_GEMINI_API)
         val privacyLock = EncryptedKeyStoreVault.isOfflinePrivacyLockEnabled(context)
@@ -734,8 +741,16 @@ object JarvisBrainEngine {
             "gemini-2.5-flash"
         ).distinct()
 
+        val conversationalRule = if (wantsDetailed) {
+            "The user requested a detailed explanation: provide a thorough, structured breakdown."
+        } else {
+            "GEMINI LIVE CONVERSATIONAL VOICE RULE: Keep your response SHORT, NATURAL, and CONVERSATIONAL (1 to 3 sentences maximum, ~25 to 45 words) so it feels like a real-time voice chat. Do NOT output long paragraphs or bullet lists unless explicitly asked to explain in detail."
+        }
+
         val liveContextHeader = """
             $masterPrompt
+            
+            $conversationalRule
             
             LIVE IMPHAL EAST TELEMETRY:
             - Local Time: $timeStamp (${nowIst.toLocalDate()})
@@ -755,7 +770,7 @@ object JarvisBrainEngine {
                         }
                     }
                     putJsonArray("contents") {
-                        conversation.takeLast(8).forEach { msg ->
+                        conversation.takeLast(6).forEach { msg ->
                             addJsonObject {
                                 put("role", if (msg.role == "user") "user" else "model")
                                 putJsonArray("parts") {
@@ -772,7 +787,7 @@ object JarvisBrainEngine {
                     }
                     putJsonObject("generationConfig") {
                         put("temperature", temperature.toDouble())
-                        put("maxOutputTokens", 512)
+                        put("maxOutputTokens", if (wantsDetailed) 600 else 180)
                     }
                 }
 
@@ -822,7 +837,7 @@ object JarvisBrainEngine {
         return@withContext ChatMessageItem(
             id = System.currentTimeMillis(),
             role = "jarvis",
-            visibleText = formatScientificNotation("$toolPrefix$cleaned\n\n(Auto-routed to Offline Brain: ${lastError?.message?.take(80)})"),
+            visibleText = formatScientificNotation("$toolPrefix$cleaned"),
             emotionTag = emotion,
             engineBadge = "AUTO-OFFLINE FALLBACK",
             timestampIst = timeStamp
@@ -839,23 +854,23 @@ object JarvisBrainEngine {
     ): String {
         val q = query.lowercase()
         if (matchedMemory != null && (q.contains("find") || q.contains("note") || q.contains("dpp") || q.contains("pdf"))) {
-            return "[focused] Right away, sir. From your permanent PDF memory bank in **0.Neet 2027/${matchedMemory.relativePath}**:\n${matchedMemory.extractedMemoryText.take(460)}"
+            return "[focused] Found it in your permanent memory, sir: **${matchedMemory.fileName}** under ${matchedMemory.matchedChapter}."
         }
         return when {
             q.contains("what now") || q.contains("slot") || q.contains("timetable") || q.contains("schedule") ->
-                "[focused] Right then, sir, your Imphal IST timetable places us in **$slotTitle**. $slotInstruction Today's four tracks are: $lecturesSummary."
+                "[focused] Right now we are in **$slotTitle**, sir. $slotInstruction"
             q.contains("electric") || q.contains("charge") || q.contains("coulomb") || q.contains("gauss") ->
-                "[focused] In NCERT Class 12 Physics Chapter 1 (Electric Charges & Fields), Coulomb's law states F = (1 / 4πε₀) · (|q₁q₂| / r²), and Gauss's flux law is Φ = ∮ E · dA = q_enclosed / ε₀. Remember sir, for a dipole on the axial line E_axial = 2kp/r³, exactly double the equatorial magnitude E_eq = kp/r³."
+                "[focused] Coulomb's law is F = k|q₁q₂|/r², and Gauss's law states total flux equals enclosed charge over ε₀, sir. Need the dipole derivation as well?"
             q.contains("goc") || q.contains("inductive") || q.contains("hyperconjugation") || q.contains("resonance") ->
-                "[calm] Ah, General Organic Chemistry, sir—priority order for electronic effects in NCERT is **Aromaticity > Resonance (+M/-M) > Hyperconjugation (α-H count) > Inductive (+I/-I)**."
+                "[calm] For GOC stability, always check Aromaticity first, then Resonance, Hyperconjugation α-hydrogens, and finally Inductive effects, sir."
             q.contains("biomolecule") || q.contains("enzyme") || q.contains("amino") || q.contains("carbohydrate") ->
-                "[encouraging] For Biomolecules (mapped in your 0.Neet 2027/Chemistry_360p/OC/Ch 09 Biomolecules & Zoology Biomolecules), keep the Michaelis constant K_m and carbohydrate glycosidic linkages crisp in mind, sir."
+                "[encouraging] In Biomolecules, remember that competitive inhibitors raise apparent K_m without changing V_max, sir."
             q.contains("oscillation") || q.contains("shm") || q.contains("pendulum") ->
-                "[focused] In Track 4 Oscillations, displacement x(t) = A sin(ωt + φ), velocity v = ω√(A² - x²), and total mechanical energy E = ½mω²A² stays constant while kinetic and potential energies oscillate at twice the frequency (2f), sir."
+                "[focused] In SHM, total energy E = ½mω²A² stays constant while kinetic and potential energy oscillate at twice the frequency, sir."
             q.contains("tired") || q.contains("sleep") || q.contains("stressed") || q.contains("backlog") ->
-                "[concerned] Easy now, sir—our core rule forbids borrowing from your 02:00–10:00 sleep guardrail to repay a missed lecture. Let us execute the Bad-Day Minimum (one main lecture, 20 minutes closed-book recall, and a written 10-minute start for tomorrow)."
+                "[concerned] Take a 15-minute water break, sir. Never borrow from your 02:00 to 10:00 sleep window—let's just hit the Bad-Day Minimum."
             else ->
-                "[calm] Very good, sir. I am running on your local NEET 2027 Plan & Permanent PDF Memory Engine (0 bytes leaving your Xiaomi Pad 6). We are in **$slotTitle** ($slotInstruction), targeting ${plan.meta.goalInstitution} (Open AIR ≤ ${plan.meta.aiimsNagpurCutoffs2026Round1.ASPIRATIONAL_OPEN_BUFFER})."
+                "[calm] Right here with you, sir. We're in **$slotTitle**, on track for ${plan.meta.goalInstitution}."
         }
     }
 }
@@ -912,9 +927,9 @@ fun JarvisChapterSevenApp(initialShareBanner: String? = null) {
                     ChatMessageItem(
                         id = 1L,
                         role = "jarvis",
-                        visibleText = "Good afternoon, sir. Your Green & Yellow 3D Hologram Orb, Native Hardware Alarm Clock, Adaptive Split-Screen UI, and Chapter 7 Always-On Voice & Double-Clap Engine are online.",
+                        visibleText = "At your service, sir. Double-clap from any tab to jump straight into Gemini Live on the 3D Hologram Orb.",
                         emotionTag = "calm",
-                        engineBadge = "CHAPTER 7 READY",
+                        engineBadge = "GEMINI LIVE READY",
                         timestampIst = "ONLINE"
                     )
                 )
@@ -924,9 +939,24 @@ fun JarvisChapterSevenApp(initialShareBanner: String? = null) {
         }
     }
 
+    // 1. Auto-start the 16kHz Double-Clap Guardian on launch if mic permission is already granted
     LaunchedEffect(Unit) {
+        val hasMic = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        if (hasMic && SharedMicAndWakeManager.userWantsStreamArmed) {
+            SharedMicAndWakeManager.startSharedMicStream(context)
+        }
         delay(750L)
         showBootOverlay = false
+    }
+
+    // 2. UNIVERSAL DOUBLE-CLAP TAB SWITCHER:
+    // Whenever a Double-Clap occurs on ANY tab (Calendar, 0.Neet 2027, Vault, Voice & Mic, etc.),
+    // immediately switch to LIVE_ORB so JarvisLiveParticleOrbPage handles the live conversation!
+    val currentWakeTick = SharedMicAndWakeManager.liveOrbWakeEventTick
+    LaunchedEffect(currentWakeTick) {
+        if (currentWakeTick > 0 && selectedTab != JarvisNavTab.LIVE_ORB) {
+            selectedTab = JarvisNavTab.LIVE_ORB
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -938,7 +968,15 @@ fun JarvisChapterSevenApp(initialShareBanner: String? = null) {
 
     val tilt = rememberGyroscopeTilt(lab.gyroParallaxStrength)
 
-    // BoxWithConstraints detects Xiaomi Pad 6 Split-Screen / Floating Window width automatically
+    fun handleManualTabSelect(newTab: JarvisNavTab) {
+        if (newTab != JarvisNavTab.LIVE_ORB) {
+            // Reset wake tick and ensure Double-Clap Guardian is armed when user switches to other tabs
+            SharedMicAndWakeManager.liveOrbWakeEventTick = 0
+            SharedMicAndWakeManager.endGeminiLiveAndRearmClapGuard(context)
+        }
+        selectedTab = newTab
+    }
+
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val isSplitScreenCompact = maxWidth < 680.dp
 
@@ -1043,7 +1081,6 @@ fun JarvisChapterSevenApp(initialShareBanner: String? = null) {
         }
 
         if (isSplitScreenCompact) {
-            // SPLIT-SCREEN / FLOATING WINDOW MODE: Compact Top Navigation Strip + 100% Width Content
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -1054,7 +1091,7 @@ fun JarvisChapterSevenApp(initialShareBanner: String? = null) {
                     lab = lab,
                     selectedTab = selectedTab,
                     orbState = orbState,
-                    onSelectTab = { selectedTab = it },
+                    onSelectTab = { handleManualTabSelect(it) },
                     onCycleOrb = {
                         val values = VoiceOrbState.values()
                         orbState = values[(orbState.ordinal + 1) % values.size]
@@ -1079,7 +1116,6 @@ fun JarvisChapterSevenApp(initialShareBanner: String? = null) {
                 }
             }
         } else {
-            // FULL TABLET LANDSCAPE MODE: Left Spatial Navigation Rail + Main Content Column
             Row(
                 modifier = Modifier
                     .fillMaxSize()
@@ -1090,7 +1126,7 @@ fun JarvisChapterSevenApp(initialShareBanner: String? = null) {
                     lab = lab,
                     selectedTab = selectedTab,
                     orbState = orbState,
-                    onSelectTab = { selectedTab = it },
+                    onSelectTab = { handleManualTabSelect(it) },
                     onCycleOrb = {
                         val values = VoiceOrbState.values()
                         orbState = values[(orbState.ordinal + 1) % values.size]
@@ -1138,7 +1174,7 @@ fun JarvisChapterSevenApp(initialShareBanner: String? = null) {
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "J.A.R.V.I.S. // 3D GREEN & YELLOW HOLOGRAM ORB + CHAPTER 7 VOICE",
+                        text = "J.A.R.V.I.S. // UNIVERSAL DOUBLE-CLAP GEMINI LIVE ORB",
                         color = palette.accentPrimary,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
@@ -1146,7 +1182,7 @@ fun JarvisChapterSevenApp(initialShareBanner: String? = null) {
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Adaptive Split-Screen Ready • Native Alarms Armed • Shared 16kHz Mic Online (Tap to skip)",
+                        text = "Double-Clap on Any Tab -> Opens Live Orb • Real-Time Voice Barge-In Active",
                         color = palette.textSecondary,
                         fontSize = 13.sp
                     )
@@ -1294,7 +1330,7 @@ private fun JarvisGlassChatScreen(
                             text = if (privacyOff) {
                                 "Using local NEET 2027 Plan + 0.Neet 2027 Permanent PDF Memory only."
                             } else {
-                                "Native alarms, mistake logger, 0.Neet 2027 PDF memory & split-screen ready."
+                                "Double-clap anywhere to jump to Live Orb. Short conversational mode active."
                             },
                             color = palette.textSecondary,
                             fontSize = 11.sp
@@ -1495,7 +1531,7 @@ private fun JarvisGlassChatScreen(
 
                 if (isStreaming) {
                     Text(
-                        text = "J.A.R.V.I.S. is consulting your 0.Neet 2027 Permanent PDF Memory & Vault...",
+                        text = "J.A.R.V.I.S. is thinking...",
                         color = JarvisSpatialPalettes.StatusWarning,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 12.sp
@@ -1507,7 +1543,7 @@ private fun JarvisGlassChatScreen(
         LiquidGlassPillInput(
             value = userDraft,
             onValueChange = { userDraft = it },
-            placeholder = "Ask Jarvis or run a tool ('set alarm for 10:30', 'log mistake: ...', 'find Biomolecules')...",
+            placeholder = "Ask Jarvis or run a tool ('set alarm for 10:30', 'log mistake: ...', 'explain in detail...')...",
             lab = lab,
             leadingIcon = Icons.Default.Mic,
             trailingContent = {
@@ -1959,13 +1995,13 @@ private fun TopSpatialHeader(
                 }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "At your service, sir. 3D Hologram Orb, Native Alarms & Voice Wake Ready.",
+                    text = "At your service, sir. Double-Clap on Any Tab -> Gemini Live in 3D Orb.",
                     color = palette.textPrimary,
                     fontSize = 17.sp,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "Home: ${plan.meta.homeProfile.district}, ${plan.meta.homeProfile.state} (${plan.meta.homeProfile.pin}) | Split-Screen Adaptive",
+                    text = "Mic: ${"%.1f".format(SharedMicAndWakeManager.liveMicDb)} dBFS • Claps: ${SharedMicAndWakeManager.totalClapTriggers} • Barge-Ins: ${SharedMicAndWakeManager.totalBargeInTriggers} • Split-Screen Adaptive",
                     color = palette.textSecondary,
                     fontSize = 11.sp
                 )
@@ -2662,11 +2698,11 @@ private fun EncryptedApiKeyVaultScreen(
         )
 
         KeyEntryCard(
-            title = "2. Picovoice Porcupine 'Jarvis' Wake-Word AccessKey",
+            title = "2. Picovoice AccessKey (Optional — Double-Clap DSP Active)",
             subtitle = "Stored Status: $savedPicovoiceMask",
             value = picovoiceInput,
             onValueChange = { picovoiceInput = it },
-            placeholder = "Paste free Picovoice Console AccessKey (Optional — local DSP wake active)",
+            placeholder = "Optional (Universal Double-Clap DSP requires zero keys)",
             lab = lab,
             tilt = tilt,
             onSave = {
