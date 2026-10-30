@@ -411,6 +411,7 @@ private enum class JarvisNavTab(val label: String, val icon: ImageVector) {
     BUTLER_TTS("Butler TTS", Icons.Default.VolumeUp),
     OFFLINE_RAG("Offline RAG", Icons.Default.Memory),
     VISION_HUD("Vision & HUD", Icons.Default.Bolt),
+    NEET_PORTALS("NEET Portals", Icons.Default.CloudDone),
     AUDIT_OTA("Audit & OTA", Icons.Default.Shield),
     STUDY_LIBRARY("0.Neet 2027", Icons.Default.Folder),
     VAULT_TOOLS("Vault", Icons.Default.Lock),
@@ -556,7 +557,7 @@ object EncryptedKeyStoreVault {
 }
 
 // ============================================================================
-// 4. HYBRID CLOUD + OFFLINE RAG BRAIN ENGINE (WITH 0ms WI-FI OFF SWITCHING)
+// 4. HYBRID CLOUD + OFFLINE RAG + NEETPREP TELEMETRY BRAIN ENGINE
 // ============================================================================
 
 data class DiscoveredModelInfo(
@@ -718,18 +719,21 @@ object JarvisBrainEngine {
         val toolOutcome = JarvisAutonomousToolRouter.evaluateAndRunAutonomousTools(context, plan, userQuery)
         val toolPrefix = if (toolOutcome.toolSummaryBanner.isNotBlank()) "${toolOutcome.toolSummaryBanner}\n\n" else ""
 
-        // 2. Chapter 9 Hybrid Local RAG Retrieval (Whole-word scientific boost, filters out casual greetings)
+        // 2. Chapter 9 Hybrid Local RAG Retrieval + Chapter 12 NEETprep Score & MCQ Telemetry
         val (ragContextBlock, ragCitations) = JarvisHybridRagEngine.buildRagContextBlockForPrompt(context, userQuery)
         val topCitation = ragCitations.firstOrNull()
         val citationBadgeSuffix = if (topCitation != null) {
             " • Cited: ${topCitation.sourceTitle.take(18)} (${topCitation.confidencePercent}%)"
         } else ""
+        val neetPrepTelemetry = JarvisNeetWebAndPrepManager.buildNeetPrepTelemetryForJarvisBrain(context)
 
         val lowerQ = userQuery.lowercase()
         val wantsDetailed = lowerQ.contains("detail") || lowerQ.contains("elaborate") ||
             lowerQ.contains("in depth") || lowerQ.contains("step by step") || lowerQ.contains("derive")
+        val asksAboutNeetPrepOrScores = lowerQ.contains("neetprep") || lowerQ.contains("score") ||
+            lowerQ.contains("mock") || lowerQ.contains("mcq") || lowerQ.contains("nta")
 
-        // 3. Instant 0ms Hardware Wi-Fi / Network Check (Never hangs on Cloud timeouts when Wi-Fi is OFF!)
+        // 3. Instant 0ms Hardware Wi-Fi / Network Check
         val isOnlineRightNow = LocalLlmModelManager.isDeviceOnlineRightNow(context)
         JarvisSttRouter.isNetworkReachable = isOnlineRightNow
 
@@ -737,17 +741,21 @@ object JarvisBrainEngine {
         val privacyLock = EncryptedKeyStoreVault.isOfflinePrivacyLockEnabled(context)
 
         if (forceOffline || privacyLock || apiKey.isBlank() || !isOnlineRightNow) {
-            val offlineText = JarvisHybridRagEngine.generateOfflineConversationalOrRagReply(
-                context = context,
-                plan = plan,
-                slotTitle = activeSlot.title,
-                slotInstruction = activeSlot.instruction,
-                lecturesSummary = lecturesSummary,
-                rawUserQuery = userQuery,
-                topCitation = topCitation,
-                wantsDetailed = wantsDetailed
-            )
-            val (emotion, cleaned) = parseEmotionAndCleanText(offlineText)
+            val baseOfflineText = if (asksAboutNeetPrepOrScores) {
+                "[proud] Here is your live NEETprep & MCQ status on-device, sir: $neetPrepTelemetry"
+            } else {
+                JarvisHybridRagEngine.generateOfflineConversationalOrRagReply(
+                    context = context,
+                    plan = plan,
+                    slotTitle = activeSlot.title,
+                    slotInstruction = activeSlot.instruction,
+                    lecturesSummary = lecturesSummary,
+                    rawUserQuery = userQuery,
+                    topCitation = topCitation,
+                    wantsDetailed = wantsDetailed
+                )
+            }
+            val (emotion, cleaned) = parseEmotionAndCleanText(baseOfflineText)
             val offlineBadge = if (topCitation != null) {
                 "OFFLINE RAG$citationBadgeSuffix"
             } else {
@@ -786,6 +794,7 @@ object JarvisBrainEngine {
             - Local Time: $timeStamp (${nowIst.toLocalDate()})
             - Active Timetable Slot: ${activeSlot.title} (${activeSlot.startTime}-${activeSlot.endTime}) -> ${activeSlot.instruction}
             - Today's 4-Track Queue: $lecturesSummary
+            - $neetPrepTelemetry
             $ragContextBlock
         """.trimIndent()
 
@@ -882,7 +891,7 @@ object JarvisBrainEngine {
 }
 
 // ============================================================================
-// 5. MAIN ACTIVITY & CHAPTER 11 MASTER PRODUCTION ROOT COMPOSABLE
+// 5. MAIN ACTIVITY & CHAPTER 12 MASTER PRODUCTION ROOT COMPOSABLE
 // ============================================================================
 
 class MainActivity : ComponentActivity() {
@@ -937,9 +946,9 @@ fun JarvisMasterProductionApp(initialShareBanner: String? = null) {
                     ChatMessageItem(
                         id = 1L,
                         role = "jarvis",
-                        visibleText = "At your service, sir. All 11 chapters—including Universal Double-Clap Gemini Live, British Butler TTS, Hybrid Local RAG, Multimodal Vision, Floating HUD Pill & 12-Point Self-Audit—are online.",
+                        visibleText = "At your service, sir. Picovoice Porcupine ('Jarvis') + Double-Clap Dual Wake, Official NTA/NMC/MCC Portals & NEETprep.com Score/Question Bridge are online.",
                         emotionTag = "proud",
-                        engineBadge = "ALL 11 CHAPTERS ONLINE",
+                        engineBadge = "PICOVOICE + NEETPREP ONLINE",
                         timestampIst = "ONLINE"
                     )
                 )
@@ -950,7 +959,6 @@ fun JarvisMasterProductionApp(initialShareBanner: String? = null) {
     }
 
     LaunchedEffect(Unit) {
-        // Auto-mount downloaded GGUF (e.g., gemma-3-1b-it-q4_k_m.gguf) if present in 0.Neet 2027/AI_MODELS
         LocalLlmModelManager.autoMountExistingModelIfReady(context)
         val hasMic = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         if (hasMic && SharedMicAndWakeManager.userWantsStreamArmed) {
@@ -960,7 +968,7 @@ fun JarvisMasterProductionApp(initialShareBanner: String? = null) {
         showBootOverlay = false
     }
 
-    // UNIVERSAL DOUBLE-CLAP TAB SWITCHER -> Jumps straight to LIVE_ORB from any tab!
+    // UNIVERSAL WAKE TAB SWITCHER (Picovoice "Jarvis" OR Double-Clap) -> Jumps straight to LIVE_ORB!
     val currentWakeTick = SharedMicAndWakeManager.liveOrbWakeEventTick
     LaunchedEffect(currentWakeTick) {
         if (currentWakeTick > 0 && selectedTab != JarvisNavTab.LIVE_ORB) {
@@ -1030,6 +1038,11 @@ fun JarvisMasterProductionApp(initialShareBanner: String? = null) {
                     lab = lab,
                     committedModelId = committedModelId,
                     forceOffline = forceOfflineRouter,
+                    tilt = tilt
+                )
+                JarvisNavTab.NEET_PORTALS -> JarvisNeetWebAndNeetPrepScreen(
+                    plan = plan,
+                    lab = lab,
                     tilt = tilt
                 )
                 JarvisNavTab.AUDIT_OTA -> JarvisSelfAuditAndOtaScreen(
@@ -1204,7 +1217,7 @@ fun JarvisMasterProductionApp(initialShareBanner: String? = null) {
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "J.A.R.V.I.S. // ALL 11 CHAPTERS ONLINE (PRODUCTION MASTER)",
+                        text = "J.A.R.V.I.S. // PICOVOICE + NTA PORTALS + NEETPREP BRIDGE ONLINE",
                         color = palette.accentPrimary,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
@@ -1212,7 +1225,7 @@ fun JarvisMasterProductionApp(initialShareBanner: String? = null) {
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Universal Double-Clap Gemini Live • Hybrid RAG • Vision & Floating HUD • Self-Audit & OTA",
+                        text = "Say 'Jarvis' or Double-Clap • NTA/NMC/MCC Live Notices • NEETprep.com Score & MCQ Sync",
                         color = palette.textSecondary,
                         fontSize = 13.sp
                     )
@@ -1323,9 +1336,9 @@ private fun JarvisGlassChatScreen(
     val privacyOff = EncryptedKeyStoreVault.isOfflinePrivacyLockEnabled(context) || forceOffline || !isWifiOnline
 
     val suggestionChips = listOf(
+        "What is my latest NEETprep test score and MCQ count?",
         "how r u",
         "is the offline mode working",
-        "are you mounted in RAM",
         "set alarm for 10:30",
         "GOC: Priority order of electronic effects",
         "Explain Coulomb's law in detail"
@@ -1350,7 +1363,7 @@ private fun JarvisGlassChatScreen(
                             text = if (privacyOff) {
                                 "OFFLINE BRAIN ACTIVE (0ms SWITCH) // ${LocalLlmModelManager.activeMountedModelName}"
                             } else {
-                                "HYBRID CLOUD + LOCAL RAG // ${committedModelId.ifBlank { "gemini-3.8-flash" }}"
+                                "HYBRID CLOUD + LOCAL RAG + NEETPREP // ${committedModelId.ifBlank { "gemini-3.8-flash" }}"
                             },
                             color = palette.textPrimary,
                             fontFamily = FontFamily.Monospace,
@@ -1359,9 +1372,9 @@ private fun JarvisGlassChatScreen(
                         )
                         Text(
                             text = if (privacyOff) {
-                                "Wi-Fi is OFF or Locked: Answering 100% locally via Gemma 3 1B + 1,363 PDFs + NCERT Core."
+                                "Wi-Fi is OFF or Locked: Answering 100% locally via Gemma 3 1B + 1,363 PDFs + NEETprep Ledger."
                             } else {
-                                "Wi-Fi Online: Double-clap anywhere to jump to Live Orb. Hybrid RAG citations attached."
+                                "Wi-Fi Online: Say 'Jarvis' or Double-Clap anywhere to jump to Live Orb."
                             },
                             color = palette.textSecondary,
                             fontSize = 11.sp
@@ -1417,7 +1430,7 @@ private fun JarvisGlassChatScreen(
             LiquidGlassPillInput(
                 value = searchFilter,
                 onValueChange = { searchFilter = it },
-                placeholder = "Search chat history (e.g., Biomolecules, Coulomb, GOC, mistake)...",
+                placeholder = "Search chat history (e.g., NEETprep, Biomolecules, Coulomb, GOC)...",
                 lab = lab,
                 leadingIcon = Icons.Default.Search,
                 trailingContent = {
@@ -1562,7 +1575,7 @@ private fun JarvisGlassChatScreen(
 
                 if (isStreaming) {
                     Text(
-                        text = "J.A.R.V.I.S. is retrieving citations & thinking...",
+                        text = "J.A.R.V.I.S. is retrieving citations & NEETprep telemetry...",
                         color = JarvisSpatialPalettes.StatusWarning,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 12.sp
@@ -1574,7 +1587,7 @@ private fun JarvisGlassChatScreen(
         LiquidGlassPillInput(
             value = userDraft,
             onValueChange = { userDraft = it },
-            placeholder = "Ask Jarvis offline or online ('how r u', 'is offline mode working', 'explain Gauss law')...",
+            placeholder = "Ask Jarvis offline or online ('What is my NEETprep score?', 'explain Gauss law')...",
             lab = lab,
             leadingIcon = Icons.Default.Mic,
             trailingContent = {
@@ -2019,7 +2032,7 @@ private fun TopSpatialHeader(
                     Box(modifier = Modifier.size(9.dp).clip(CircleShape).background(JarvisSpatialPalettes.StatusError))
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
-                        text = "J.A.R.V.I.S. // ${if (!isOnlineNow || forceOffline) "OFFLINE BRAIN (${LocalLlmModelManager.activeMountedModelName.take(22)})" else committedModelId.ifBlank { "GEMINI 3.8 + VISION" }}",
+                        text = "J.A.R.V.I.S. // ${if (!isOnlineNow || forceOffline) "OFFLINE BRAIN (${LocalLlmModelManager.activeMountedModelName.take(22)})" else committedModelId.ifBlank { "GEMINI 3.8 + PICOVOICE" }}",
                         color = if (!isOnlineNow || forceOffline) JarvisSpatialPalettes.StatusSuccess else JarvisSpatialPalettes.StatusWarning,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
@@ -2028,13 +2041,13 @@ private fun TopSpatialHeader(
                 }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "At your service, sir. Double-Clap on Any Tab -> Gemini Live in 3D Orb.",
+                    text = "At your service, sir. Say 'Jarvis' (Picovoice) or Double-Clap on Any Tab -> Gemini Live.",
                     color = palette.textPrimary,
                     fontSize = 17.sp,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "Mic: ${"%.1f".format(SharedMicAndWakeManager.liveMicDb)} dBFS • Claps: ${SharedMicAndWakeManager.totalClapTriggers} • Barge-Ins: ${SharedMicAndWakeManager.totalBargeInTriggers} • ${if (isOnlineNow) "Wi-Fi Online" else "Wi-Fi OFF (0ms Offline Mode)"}",
+                    text = "Mic: ${"%.1f".format(SharedMicAndWakeManager.liveMicDb)} dBFS • Picovoice: ${SharedMicAndWakeManager.totalPorcupineTriggers} • Claps: ${SharedMicAndWakeManager.totalClapTriggers} • Barge-Ins: ${SharedMicAndWakeManager.totalBargeInTriggers} • ${if (isOnlineNow) "Wi-Fi Online" else "Wi-Fi OFF (0ms Offline)"}",
                     color = palette.textSecondary,
                     fontSize = 11.sp
                 )
@@ -2731,26 +2744,30 @@ private fun EncryptedApiKeyVaultScreen(
         )
 
         KeyEntryCard(
-            title = "2. Picovoice AccessKey (Optional — Double-Clap DSP Active)",
-            subtitle = "Stored Status: $savedPicovoiceMask",
+            title = "2. Picovoice Porcupine AccessKey ('Jarvis' Neural Wake Word + Double-Clap)",
+            subtitle = "Stored Status: $savedPicovoiceMask • Hot-reloads 16kHz Porcupine stream on save",
             value = picovoiceInput,
             onValueChange = { picovoiceInput = it },
-            placeholder = "Optional (Universal Double-Clap DSP requires zero keys)",
+            placeholder = "Paste AccessKey from console.picovoice.ai to enable 'Jarvis' wake word",
             lab = lab,
             tilt = tilt,
             onSave = {
                 EncryptedKeyStoreVault.saveSecret(context, EncryptedKeyStoreVault.KEY_PICOVOICE_ACCESS, picovoiceInput.trim())
                 savedPicovoiceMask = EncryptedKeyStoreVault.maskSecret(EncryptedKeyStoreVault.readSecret(context, EncryptedKeyStoreVault.KEY_PICOVOICE_ACCESS))
                 picovoiceInput = ""
+                SharedMicAndWakeManager.stopSharedMicStream()
+                SharedMicAndWakeManager.startSharedMicStream(context)
             },
             onClear = {
                 EncryptedKeyStoreVault.saveSecret(context, EncryptedKeyStoreVault.KEY_PICOVOICE_ACCESS, "")
                 savedPicovoiceMask = EncryptedKeyStoreVault.maskSecret("")
+                SharedMicAndWakeManager.stopSharedMicStream()
+                SharedMicAndWakeManager.startSharedMicStream(context)
             }
         )
 
         KeyEntryCard(
-            title = "3. GitHub Fine-Grained Token (Code Audit & Repair - Chapter 11)",
+            title = "3. GitHub Fine-Grained Token (Code Audit & Remote CI Dispatch)",
             subtitle = "Stored Status: $savedGithubMask",
             value = githubInput,
             onValueChange = { githubInput = it },
