@@ -13,47 +13,24 @@ android {
         applicationId = "com.jarvis.neet2027"
         minSdk = 31
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0-chapter1"
-
-        vectorDrawables {
-            useSupportLibrary = true
-        }
+        versionCode = 12
+        versionName = "12.0-NEET2027-Master"
     }
 
     signingConfigs {
-        create("release") {
-            val keystoreFile = file("/tmp/jarvis-release.jks")
-            if (keystoreFile.exists()) {
-                storeFile = keystoreFile
-                storePassword = System.getenv("SIGNING_STORE_PASSWORD")?.takeIf { it.isNotBlank() } ?: "jarvis2027"
-                keyAlias = System.getenv("SIGNING_KEY_ALIAS")?.takeIf { it.isNotBlank() } ?: "jarvis"
-                keyPassword = System.getenv("SIGNING_KEY_PASSWORD")?.takeIf { it.isNotBlank() } ?: "jarvis2027"
-            }
+        getByName("debug") {
+            // Uses standard Android debug keystore in CI so updates install seamlessly
         }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            val keystoreFile = file("/tmp/jarvis-release.jks")
-            signingConfig = if (keystoreFile.exists()) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
-            }
+            signingConfig = signingConfigs.getByName("debug")
         }
         debug {
-            val keystoreFile = file("/tmp/jarvis-release.jks")
-            if (keystoreFile.exists()) {
-                signingConfig = signingConfigs.getByName("release")
-            }
+            signingConfig = signingConfigs.getByName("debug")
         }
-    }
-
-    lint {
-        checkReleaseBuilds = false
-        abortOnError = false
     }
 
     compileOptions {
@@ -67,7 +44,6 @@ android {
 
     buildFeatures {
         compose = true
-        buildConfig = true
     }
 
     packaging {
@@ -80,14 +56,20 @@ android {
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.10.01")
     implementation(composeBom)
-    implementation("androidx.core:core-ktx:1.15.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+
+    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
     implementation("androidx.activity:activity-compose:1.9.3")
+
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
+
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+
+    // Official Picovoice Porcupine On-Device Neural Wake-Word Engine ("Jarvis")
+    implementation("ai.picovoice:porcupine-android:3.0.3")
 }
